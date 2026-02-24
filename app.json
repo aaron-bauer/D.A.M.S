@@ -1,0 +1,44 @@
+{
+    "expo": {
+        "name": "D.A.M.S.",
+        "slug": "disaster-aid-management-system",
+        "version": "1.0.0",
+        "orientation": "portrait",
+        "userInterfaceStyle": "dark",
+        "splash": {
+            "resizeMode": "contain",
+            "backgroundColor": "#0D1117"
+        },
+        "ios": {
+            "supportsTablet": true,
+            "bundleIdentifier": "com.school.dams",
+            "infoPlist": {
+                "NSLocationWhenInUseUsageDescription": "D.A.M.S. needs GPS to share your location with rescue teams.",
+                "NSLocationAlwaysAndWhenInUseUsageDescription": "D.A.M.S. needs GPS even in the background to assist rescue teams.",
+                "NSLocalNetworkUsageDescription": "D.A.M.S. needs local network access to discover nearby rescue devices."
+            }
+        },
+        "android": {
+            "adaptiveIcon": {
+                "backgroundColor": "#0D1117"
+            },
+            "package": "com.school.dams",
+            "permissions": [
+                "ACCESS_FINE_LOCATION",
+                "ACCESS_COARSE_LOCATION",
+                "ACCESS_WIFI_STATE",
+                "CHANGE_WIFI_STATE",
+                "INTERNET",
+                "ACCESS_NETWORK_STATE"
+            ]
+        },
+        "plugins": [
+            [
+                "expo-location",
+                {
+                    "locationAlwaysAndWhenInUsePermission": "D.A.M.S. needs GPS to share your location with rescue teams."
+                }
+            ]
+        ]
+    }
+}

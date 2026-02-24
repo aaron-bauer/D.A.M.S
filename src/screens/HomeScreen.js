@@ -1,0 +1,227 @@
+/**
+ * HomeScreen.js
+ * =============
+ * Main dashboard screen showing:
+ *   • Current role badge (Survivor / Rescue Team)
+ *   • Animated connection status
+ *   • Current GPS coordinates
+ *   • Network peer count
+ *   • Start / Stop network button
+ *   • SOS button (survivors only)
+ */
+import React, { useEffect, useState, useRef } from 'react';
+import {
+    View, Text, TouchableOpacity, StyleSheet,
+    SafeAreaView, Animated, Alert, ScrollView,
+} from 'react-native';
+import { useMesh, useDispatch } from '../context/MeshContext';
+import * as NetworkService from '../services/NetworkService';
+import {
+    requestLocationPermission, startLocationTracking,
+    stopLocationTracking, formatLocation
+} from '../services/LocationService';
+import { getLastLocation } from '../services/StorageService';
+import ConnectionStatus from '../components/ConnectionStatus';
+
+export default function HomeScreen() {
+    const mesh = useMesh();
+    const dispatch = useDispatch();
+    const [active, setActive] = useState(false);
+    const [lastLocation, setLastLocation] = useState(null);
+
+    // Load last known location on mount
+    useEffect(() => {
+        (async () => {
+            const loc = await getLastLocation();
+            if (loc) setLastLocation(loc);
+        })();
+    }, []);
+
+    // Keep UI in sync with GPS updates
+    useEffect(() => {
+        if (mesh.deviceInfo.lat) {
+            setLastLocation({ lat: mesh.deviceInfo.lat, lon: mesh.deviceInfo.lon });
+        }
+    }, [mesh.deviceInfo.lat, mesh.deviceInfo.lon]);
+
+    // ─── Start/Stop Network ────────────────────────────────────────────────────
+    const handleToggleNetwork = async () => {
+        if (active) {
+            NetworkService.stop();
+            stopLocationTracking();
+            setActive(false);
+            dispatch({ type: 'SET_NETWORK_STATUS', payload: { status: 'idle' } });
+            return;
+        }
+
+        // Request GPS permission first
+        const granted = await requestLocationPermission();
+        if (!granted) {
+            Alert.alert('Permission Needed', 'Location permission is required to use D.A.M.S.');
+            return;
+        }
+
+        // Start GPS tracking and update global state on each fix
+        await startLocationTracking((loc) => {
+            dispatch({ type: 'UPDATE_LOCATION', payload: loc });
+        });
+
+        // Get an immediate fix
+        const loc = await getLastLocation();
+        const deviceInfo = {
+            id: mesh.deviceInfo.id,
+            name: mesh.deviceInfo.name,
+            lat: loc?.lat || 14.5995,
+            lon: loc?.lon || 120.9842,
+        };
+
+        // Start the P2P network module
+        await NetworkService.start(mesh.role, deviceInfo);
+        setActive(true);
+    };
+
+    // ─── SOS ──────────────────────────────────────────────────────────────────
+    const handleSOS = () => {
+        Alert.alert(
+            '🆘 Send SOS Alert',
+            'This will broadcast your current location as an emergency to the rescue team.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'SEND SOS', style: 'destructive',
+                    onPress: () => {
+                        NetworkService.sendSOS({
+                            id: mesh.deviceInfo.id,
+                            name: mesh.deviceInfo.name,
+                            lat: mesh.deviceInfo.lat || 14.5995,
+                            lon: mesh.deviceInfo.lon || 120.9842,
+                        });
+                    },
+                },
+            ]
+        );
+    };
+
+    // ─── UI Helpers ────────────────────────────────────────────────────────────
+    const isRescue = mesh.role === 'rescue';
+    const isSurvivor = mesh.role === 'survivor';
+    const statusLabel = {
+        idle: 'Offline — Press Start',
+        scanning: 'Scanning for rescue server…',
+        listening: 'Listening for survivors…',
+        connected: 'Connected to mesh network',
+        not_found: 'No rescue server found',
+        no_wifi: 'Not connected to WiFi',
+        error: 'Network error',
+        stopped: 'Stopped',
+    }[mesh.networkStatus.status] || mesh.networkStatus.status;
+
+    const simBadge = NetworkService.SIMULATION_MODE ? '  [DEMO MODE]' : '';
+
+    return (
+        <SafeAreaView style={styles.safe}>
+            <ScrollView contentContainerStyle={styles.container}>
+
+                {/* Header */}
+                <View style={styles.header}>
+                    <Text style={styles.appTitle}>D.A.M.S.{simBadge}</Text>
+                    <View style={[styles.roleBadge, isRescue ? styles.rescueBadge : styles.survivorBadge]}>
+                        <Text style={styles.roleBadgeText}>
+                            {isRescue ? '🛡️ Rescue Team' : '🔴 Survivor'}
+                        </Text>
+                    </View>
+                </View>
+
+                {/* Connection Status Widget */}
+                <View style={styles.card}>
+                    <ConnectionStatus status={mesh.networkStatus.status} />
+                    <Text style={styles.statusLabel}>{statusLabel}</Text>
+                    {mesh.networkStatus.peerCount > 0 && (
+                        <Text style={styles.peerCount}>
+                            {isRescue
+                                ? `👥 ${mesh.networkStatus.peerCount} survivor(s) connected`
+                                : `📡 Connected to rescue server`}
+                        </Text>
+                    )}
+                </View>
+
+                {/* GPS Info */}
+                <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>📍 Your Location</Text>
+                    <Text style={styles.coordText}>
+                        {lastLocation ? formatLocation(lastLocation) : 'Acquiring GPS…'}
+                    </Text>
+                    {lastLocation && (
+                        <Text style={styles.muted}>
+                            Saved locally · will broadcast when connected
+                        </Text>
+                    )}
+                </View>
+
+                {/* Network Mode Info */}
+                {isRescue && (
+                    <View style={styles.card}>
+                        <Text style={styles.sectionTitle}>📶 Rescue Server Info</Text>
+                        <Text style={styles.muted}>
+                            Enable your phone's mobile hotspot, then press Start.{'\n'}
+                            Survivors connect to your hotspot and are automatically found.
+                        </Text>
+                    </View>
+                )}
+                {isSurvivor && (
+                    <View style={styles.card}>
+                        <Text style={styles.sectionTitle}>📶 Connection Info</Text>
+                        <Text style={styles.muted}>
+                            Connect to the rescue team's WiFi hotspot, then press Start.{'\n'}
+                            Your GPS location will be sent automatically.
+                        </Text>
+                    </View>
+                )}
+
+                {/* Start / Stop Button */}
+                <TouchableOpacity
+                    style={[styles.mainBtn, active ? styles.stopBtn : styles.startBtn]}
+                    onPress={handleToggleNetwork}
+                >
+                    <Text style={styles.mainBtnText}>
+                        {active ? '⏹  Stop Network' : '▶  Start Network'}
+                    </Text>
+                </TouchableOpacity>
+
+                {/* SOS — survivors only */}
+                {isSurvivor && (
+                    <TouchableOpacity style={styles.sosBtn} onPress={handleSOS}>
+                        <Text style={styles.sosBtnText}>🆘  SEND SOS</Text>
+                    </TouchableOpacity>
+                )}
+
+            </ScrollView>
+        </SafeAreaView>
+    );
+}
+
+const styles = StyleSheet.create({
+    safe: { flex: 1, backgroundColor: '#0D1117' },
+    container: { padding: 20, paddingBottom: 40 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+    appTitle: { fontSize: 22, fontWeight: '900', color: '#FF3B30', letterSpacing: 2 },
+    roleBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+    survivorBadge: { backgroundColor: '#2D1315', borderWidth: 1, borderColor: '#FF3B30' },
+    rescueBadge: { backgroundColor: '#0D1B2A', borderWidth: 1, borderColor: '#0A84FF' },
+    roleBadgeText: { color: '#F0F6FC', fontWeight: '600', fontSize: 13 },
+    card: {
+        backgroundColor: '#161B22', borderRadius: 14, padding: 16, marginBottom: 14,
+        borderWidth: 1, borderColor: '#30363D', alignItems: 'center'
+    },
+    statusLabel: { color: '#F0F6FC', fontSize: 15, fontWeight: '600', marginTop: 10 },
+    peerCount: { color: '#30D158', fontSize: 13, marginTop: 6 },
+    sectionTitle: { color: '#F0F6FC', fontWeight: '700', fontSize: 14, marginBottom: 8, alignSelf: 'flex-start' },
+    coordText: { color: '#30D158', fontSize: 14, fontFamily: 'monospace', textAlign: 'center' },
+    muted: { color: '#8B949E', fontSize: 12, marginTop: 6, textAlign: 'center', lineHeight: 18 },
+    mainBtn: { paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginBottom: 12 },
+    startBtn: { backgroundColor: '#0A84FF' },
+    stopBtn: { backgroundColor: '#30363D' },
+    mainBtnText: { color: '#F0F6FC', fontSize: 17, fontWeight: '800', letterSpacing: 1 },
+    sosBtn: { backgroundColor: '#FF3B30', paddingVertical: 20, borderRadius: 14, alignItems: 'center' },
+    sosBtnText: { color: '#FFFFFF', fontSize: 20, fontWeight: '900', letterSpacing: 2 },
+});
