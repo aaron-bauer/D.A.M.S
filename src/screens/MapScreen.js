@@ -1,158 +1,187 @@
 /**
  * MapScreen.js
  * ============
- * Live map showing all survivor locations as markers.
- * Rescue team sees all connected survivors.
- * Survivors see their own pin on the map.
+ * Location tracking screen — shows all survivor GPS coordinates as cards.
  *
- * Uses react-native-maps (Google Maps on Android, Apple Maps on iOS).
+ * NOTE: react-native-maps crashes on Android without a valid Google Maps API key.
+ * This screen replaces the MapView with a crash-safe coordinate list that shows
+ * the same location data in a readable format. If you later obtain a Google Maps
+ * API key, set it in app.json and swap back to MapView.
  */
-import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity } from 'react-native';
-import MapView, { Marker, Circle, Callout } from 'react-native-maps';
+import React from 'react';
+import {
+    View, Text, StyleSheet, SafeAreaView,
+    FlatList, StatusBar, Platform,
+} from 'react-native';
 import { useMesh } from '../context/MeshContext';
+
+const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
+
+// Time-since helper
+const timeSince = (ts) => {
+    const secs = Math.floor((Date.now() - ts) / 1000);
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    return `${Math.floor(secs / 3600)}h ago`;
+};
+
+function SurvivorCard({ survivor }) {
+    const bgColor = survivor.isSOS ? '#2D1315' : '#161B22';
+    const borderColor = survivor.isSOS ? '#FF3B30' : '#30363D';
+    const icon = survivor.isSOS ? '🆘' : '🔴';
+
+    return (
+        <View style={[styles.card, { backgroundColor: bgColor, borderColor }]}>
+            <View style={styles.cardHeader}>
+                <Text style={styles.cardIcon}>{icon}</Text>
+                <View style={styles.cardHeaderText}>
+                    <Text style={styles.cardName}>{survivor.name}</Text>
+                    {survivor.isSOS && <Text style={styles.sosLabel}>SOS ALERT</Text>}
+                </View>
+                <Text style={styles.cardTime}>{timeSince(survivor.timestamp)}</Text>
+            </View>
+            <View style={styles.cardCoords}>
+                <View style={styles.coordRow}>
+                    <Text style={styles.coordLabel}>LAT</Text>
+                    <Text style={styles.coordValue}>{survivor.lat.toFixed(6)}</Text>
+                </View>
+                <View style={styles.coordRow}>
+                    <Text style={styles.coordLabel}>LON</Text>
+                    <Text style={styles.coordValue}>{survivor.lon.toFixed(6)}</Text>
+                </View>
+            </View>
+            <View style={styles.cardFooter}>
+                <Text style={styles.coordsFull}>
+                    📍 {survivor.lat.toFixed(4)}, {survivor.lon.toFixed(4)}
+                </Text>
+            </View>
+        </View>
+    );
+}
 
 export default function MapScreen() {
     const mesh = useMesh();
-    const mapRef = useRef(null);
     const isRescue = mesh.role === 'rescue';
-
-    // Own location (may be null before GPS fix)
     const ownLat = mesh.deviceInfo.lat;
     const ownLon = mesh.deviceInfo.lon;
 
-    // Default region centred on own location, or Manila as fallback
-    const region = {
-        latitude: ownLat || 14.5995,
-        longitude: ownLon || 120.9842,
-        latitudeDelta: 0.02,
-        longitudeDelta: 0.02,
-    };
-
-    // Fly to the first survivor when the survivor list populates
-    useEffect(() => {
-        if (isRescue && mesh.survivors.length > 0 && mapRef.current) {
-            const first = mesh.survivors[0];
-            mapRef.current.animateToRegion({
-                latitude: first.lat,
-                longitude: first.lon,
-                latitudeDelta: 0.015,
-                longitudeDelta: 0.015,
-            }, 800);
-        }
-    }, [mesh.survivors.length]);
-
-    // Centre map on own location
-    const goToSelf = () => {
-        if (mapRef.current && ownLat) {
-            mapRef.current.animateToRegion({
-                latitude: ownLat, longitude: ownLon,
-                latitudeDelta: 0.01, longitudeDelta: 0.01
-            }, 500);
-        }
-    };
-
-    // Time-since helper
-    const timeSince = (ts) => {
-        const secs = Math.floor((Date.now() - ts) / 1000);
-        if (secs < 60) return `${secs}s ago`;
-        if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-        return `${Math.floor(secs / 3600)}h ago`;
-    };
-
     return (
         <SafeAreaView style={styles.safe}>
-            {/* Full-screen Map */}
-            <MapView
-                ref={mapRef}
-                style={styles.map}
-                initialRegion={region}
-                showsUserLocation
-                showsMyLocationButton={false}
-                mapType="standard"
-                userInterfaceStyle="dark"
-            >
-                {/* Survivor markers (rescue team view) */}
-                {isRescue && mesh.survivors.map(s => (
-                    <React.Fragment key={s.id}>
-                        {/* Accuracy circle */}
-                        <Circle
-                            center={{ latitude: s.lat, longitude: s.lon }}
-                            radius={50}
-                            fillColor={s.isSOS ? 'rgba(255,59,48,0.15)' : 'rgba(255,159,10,0.15)'}
-                            strokeColor={s.isSOS ? '#FF3B30' : '#FF9F0A'}
-                            strokeWidth={1}
-                        />
-                        <Marker
-                            coordinate={{ latitude: s.lat, longitude: s.lon }}
-                            pinColor={s.isSOS ? '#FF3B30' : '#FF9F0A'}
-                            title={s.name}
-                        >
-                            <Callout tooltip>
-                                <View style={styles.callout}>
-                                    <Text style={styles.calloutName}>{s.isSOS ? '🆘 ' : '🔴 '}{s.name}</Text>
-                                    <Text style={styles.calloutCoord}>
-                                        {s.lat.toFixed(5)}, {s.lon.toFixed(5)}
-                                    </Text>
-                                    <Text style={styles.calloutTime}>Last seen: {timeSince(s.timestamp)}</Text>
-                                </View>
-                            </Callout>
-                        </Marker>
-                    </React.Fragment>
-                ))}
-
-                {/* Own location pin (survivor view) */}
-                {!isRescue && ownLat && (
-                    <Marker
-                        coordinate={{ latitude: ownLat, longitude: ownLon }}
-                        pinColor="#0A84FF"
-                        title="Your Location"
-                        description={`${ownLat.toFixed(5)}, ${ownLon.toFixed(5)}`}
-                    />
-                )}
-            </MapView>
-
-            {/* Info panel overlay */}
-            <View style={styles.panel}>
+            <StatusBar barStyle="light-content" backgroundColor="#0D1117" />
+            <View style={[styles.header, { paddingTop: STATUS_BAR_HEIGHT + 12 }]}>
+                <Text style={styles.headerTitle}>🗺️ Live Locations</Text>
                 {isRescue ? (
-                    <Text style={styles.panelText}>
-                        👥 {mesh.survivors.length} survivor(s) tracked
-                    </Text>
+                    <Text style={styles.headerSub}>{mesh.survivors.length} survivor(s) tracked</Text>
                 ) : (
-                    <Text style={styles.panelText}>
-                        {ownLat ? `📍 Your pin: ${ownLat.toFixed(4)}, ${ownLon.toFixed(4)}` : '📍 Waiting for GPS…'}
-                    </Text>
+                    <Text style={styles.headerSub}>Your GPS position</Text>
                 )}
             </View>
 
-            {/* Re-centre button */}
-            <TouchableOpacity style={styles.centreBtn} onPress={goToSelf}>
-                <Text style={styles.centreBtnText}>◎</Text>
-            </TouchableOpacity>
+            {isRescue ? (
+                // ── Rescue view: list of all survivor locations ──────────────
+                mesh.survivors.length === 0 ? (
+                    <View style={styles.empty}>
+                        <Text style={styles.emptyIcon}>📡</Text>
+                        <Text style={styles.emptyTitle}>No survivors yet</Text>
+                        <Text style={styles.emptyHint}>
+                            Start the network on the Home tab.{'\n'}
+                            Survivor locations will appear here once they connect.
+                        </Text>
+                    </View>
+                ) : (
+                    <FlatList
+                        data={mesh.survivors}
+                        keyExtractor={(item) => item.id}
+                        renderItem={({ item }) => <SurvivorCard survivor={item} />}
+                        contentContainerStyle={styles.list}
+                        showsVerticalScrollIndicator={false}
+                    />
+                )
+            ) : (
+                // ── Survivor view: own location card ─────────────────────────
+                <View style={styles.centeredContent}>
+                    {ownLat ? (
+                        <View style={[styles.card, styles.ownCard]}>
+                            <Text style={styles.cardIcon}>📍</Text>
+                            <Text style={styles.ownTitle}>Your Current Location</Text>
+                            <View style={styles.cardCoords}>
+                                <View style={styles.coordRow}>
+                                    <Text style={styles.coordLabel}>LAT</Text>
+                                    <Text style={styles.coordValue}>{ownLat.toFixed(6)}</Text>
+                                </View>
+                                <View style={styles.coordRow}>
+                                    <Text style={styles.coordLabel}>LON</Text>
+                                    <Text style={styles.coordValue}>{ownLon.toFixed(6)}</Text>
+                                </View>
+                            </View>
+                            <Text style={styles.ownHint}>
+                                This location is saved locally and sent to the rescue team when connected.
+                            </Text>
+                        </View>
+                    ) : (
+                        <View style={styles.empty}>
+                            <Text style={styles.emptyIcon}>📍</Text>
+                            <Text style={styles.emptyTitle}>Waiting for GPS…</Text>
+                            <Text style={styles.emptyHint}>
+                                Start the network on the Home tab to begin GPS tracking.
+                            </Text>
+                        </View>
+                    )}
+                </View>
+            )}
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: '#0D1117' },
-    map: { flex: 1 },
-    panel: {
-        position: 'absolute', bottom: 20, left: 16, right: 16,
-        backgroundColor: 'rgba(22,27,34,0.92)', borderRadius: 12,
-        padding: 14, borderWidth: 1, borderColor: '#30363D'
+    header: {
+        paddingHorizontal: 20, paddingBottom: 12,
+        borderBottomWidth: 1, borderBottomColor: '#30363D',
     },
-    panelText: { color: '#F0F6FC', fontWeight: '700', fontSize: 14, textAlign: 'center' },
-    callout: {
-        backgroundColor: '#161B22', borderRadius: 10, padding: 12, minWidth: 180,
-        borderWidth: 1, borderColor: '#30363D'
+    headerTitle: { color: '#F0F6FC', fontWeight: '900', fontSize: 20, letterSpacing: 1 },
+    headerSub: { color: '#8B949E', fontSize: 12, marginTop: 2 },
+
+    list: { padding: 16, paddingBottom: 32 },
+
+    card: {
+        backgroundColor: '#161B22', borderRadius: 14, padding: 16,
+        marginBottom: 12, borderWidth: 1, borderColor: '#30363D',
     },
-    calloutName: { color: '#F0F6FC', fontWeight: '700', fontSize: 14, marginBottom: 4 },
-    calloutCoord: { color: '#8B949E', fontSize: 12, fontFamily: 'monospace' },
-    calloutTime: { color: '#FF9F0A', fontSize: 11, marginTop: 4 },
-    centreBtn: {
-        position: 'absolute', top: 16, right: 16, backgroundColor: '#161B22',
-        width: 44, height: 44, borderRadius: 22, alignItems: 'center',
-        justifyContent: 'center', borderWidth: 1, borderColor: '#30363D'
+    ownCard: {
+        margin: 16, borderColor: '#0A84FF', backgroundColor: '#0D1B2A', alignItems: 'center',
     },
-    centreBtnText: { color: '#F0F6FC', fontSize: 22 },
+    cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+    cardIcon: { fontSize: 28, marginRight: 10 },
+    cardHeaderText: { flex: 1 },
+    cardName: { color: '#F0F6FC', fontWeight: '700', fontSize: 15 },
+    sosLabel: {
+        color: '#FF3B30', fontSize: 10, fontWeight: '900',
+        letterSpacing: 1.5, marginTop: 2,
+    },
+    cardTime: { color: '#8B949E', fontSize: 11 },
+
+    cardCoords: {
+        backgroundColor: '#0D1117', borderRadius: 10, padding: 12,
+        gap: 6, marginBottom: 10,
+    },
+    coordRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    coordLabel: {
+        color: '#8B949E', fontSize: 11, fontWeight: '700',
+        letterSpacing: 1.5, width: 36,
+    },
+    coordValue: { color: '#30D158', fontSize: 13, fontFamily: 'monospace', flex: 1, textAlign: 'right' },
+
+    cardFooter: { alignItems: 'center' },
+    coordsFull: { color: '#8B949E', fontSize: 11 },
+
+    ownTitle: { color: '#F0F6FC', fontWeight: '700', fontSize: 16, marginTop: 8, marginBottom: 12 },
+    ownHint: { color: '#8B949E', fontSize: 12, textAlign: 'center', marginTop: 10, lineHeight: 18 },
+
+    centeredContent: { flex: 1, justifyContent: 'flex-start' },
+
+    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+    emptyIcon: { fontSize: 52, marginBottom: 16 },
+    emptyTitle: { color: '#F0F6FC', fontWeight: '700', fontSize: 17, marginBottom: 10 },
+    emptyHint: { color: '#8B949E', fontSize: 13, textAlign: 'center', lineHeight: 20 },
 });

@@ -8,12 +8,15 @@
  *   • Network peer count
  *   • Start / Stop network button
  *   • SOS button (survivors only)
+ *   • Change Role button
  */
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
-    SafeAreaView, Animated, Alert, ScrollView,
+    SafeAreaView, Alert, ScrollView, StatusBar, Platform,
 } from 'react-native';
+
+const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
 import { useMesh, useDispatch } from '../context/MeshContext';
 import * as NetworkService from '../services/NetworkService';
 import {
@@ -23,7 +26,7 @@ import {
 import { getLastLocation } from '../services/StorageService';
 import ConnectionStatus from '../components/ConnectionStatus';
 
-export default function HomeScreen() {
+export default function HomeScreen({ navigation }) {
     const mesh = useMesh();
     const dispatch = useDispatch();
     const [active, setActive] = useState(false);
@@ -102,6 +105,27 @@ export default function HomeScreen() {
         );
     };
 
+    // ─── Change Role ───────────────────────────────────────────────────────────
+    const handleChangeRole = () => {
+        Alert.alert(
+            'Change Role',
+            'This will stop the network and return to role selection.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Change Role', style: 'destructive',
+                    onPress: () => {
+                        NetworkService.stop();
+                        stopLocationTracking();
+                        setActive(false);
+                        dispatch({ type: 'RESET' });
+                        navigation.replace('Role');
+                    },
+                },
+            ]
+        );
+    };
+
     // ─── UI Helpers ────────────────────────────────────────────────────────────
     const isRescue = mesh.role === 'rescue';
     const isSurvivor = mesh.role === 'survivor';
@@ -120,7 +144,8 @@ export default function HomeScreen() {
 
     return (
         <SafeAreaView style={styles.safe}>
-            <ScrollView contentContainerStyle={styles.container}>
+            <StatusBar barStyle="light-content" backgroundColor="#0D1117" />
+            <ScrollView contentContainerStyle={[styles.container, { paddingTop: STATUS_BAR_HEIGHT + 8 }]}>
 
                 {/* Header */}
                 <View style={styles.header}>
@@ -195,6 +220,11 @@ export default function HomeScreen() {
                     </TouchableOpacity>
                 )}
 
+                {/* Change Role button */}
+                <TouchableOpacity style={styles.changeRoleBtn} onPress={handleChangeRole}>
+                    <Text style={styles.changeRoleBtnText}>↩ Change Role</Text>
+                </TouchableOpacity>
+
             </ScrollView>
         </SafeAreaView>
     );
@@ -224,4 +254,9 @@ const styles = StyleSheet.create({
     mainBtnText: { color: '#F0F6FC', fontSize: 17, fontWeight: '800', letterSpacing: 1 },
     sosBtn: { backgroundColor: '#FF3B30', paddingVertical: 20, borderRadius: 14, alignItems: 'center' },
     sosBtnText: { color: '#FFFFFF', fontSize: 20, fontWeight: '900', letterSpacing: 2 },
+    changeRoleBtn: {
+        marginTop: 8, paddingVertical: 14, borderRadius: 14, alignItems: 'center',
+        borderWidth: 1, borderColor: '#30363D', backgroundColor: '#161B22',
+    },
+    changeRoleBtnText: { color: '#8B949E', fontSize: 14, fontWeight: '600' },
 });

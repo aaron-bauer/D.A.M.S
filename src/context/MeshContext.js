@@ -37,6 +37,10 @@ const reducer = (state, action) => {
             return { ...state, survivors: [...state.survivors, action.payload] };
         }
         case 'ADD_MESSAGE':
+            // Prevent duplicate IDs (common in P2P broadcast cycles)
+            if (state.messages.some(m => m.id === action.payload.id)) {
+                return state;
+            }
             return { ...state, messages: [...state.messages, action.payload] };
         case 'RESET':
             return { ...initialState };

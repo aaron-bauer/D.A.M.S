@@ -7,17 +7,13 @@
  *  1. RESCUE TEAM device enables its phone hotspot.
  *  2. SURVIVORS connect to that hotspot — now all devices share a LAN.
  *  3. Rescue Mode → starts a TCP server on port 4747.
- *  4. Survivor Mode → scans the LAN subnet to find the rescue server.
+ *  4. Survivor Mode → scans the full LAN subnet (.1–.254) to find the rescue server.
  *  5. Once connected, survivors push GPS packets; rescue team plots them.
+ *  6. Both sides can send text messages over the same connection.
  *
  * SIMULATION MODE (SIMULATION_MODE = true):
  *   Runs a demo with fake data — works in Expo Go without any build step.
  *   Change SIMULATION_MODE to false when you build with: expo run:android
- *
- * REAL DEPLOYMENT NOTE:
- *   react-native-tcp-socket uses native code and requires:
- *     npx expo prebuild   (generates ios/ and android/ folders)
- *     npx expo run:android
  */
 
 import * as Network from 'expo-network';
@@ -27,29 +23,27 @@ import * as Network from 'expo-network';
  * Set to true  → demo simulation (works in Expo Go, no build needed).
  * Set to false → real TCP sockets (requires: npx expo run:android).
  */
-export const SIMULATION_MODE = true;
+export const SIMULATION_MODE = false;
 
-const P2P_PORT = 4747;      // TCP port for all mesh traffic
-const BROADCAST_INTERVAL = 15000;    // Survivors re-send location every 15 s
-const SCAN_END = 30;       // Scan .1 – .30 of the subnet
+const P2P_PORT = 4747;           // TCP port for all mesh traffic
+const BROADCAST_INTERVAL = 15000; // Survivors re-send location every 15 s
+const RECONNECT_INTERVAL = 30000; // Survivors retry connection every 30 s
+const TCP_TIMEOUT_MS = 1500;      // Connection attempt timeout (ms)
+const SCAN_END = 254;             // Scan .1–.254 of the subnet (full range)
 
 // ─── Tiny Event Emitter ───────────────────────────────────────────────────────
-// Allows screens to subscribe to network events without tight coupling.
 const listeners = {};
 
-/** Subscribe to a network event. */
 export const on = (event, fn) => {
     if (!listeners[event]) listeners[event] = [];
     listeners[event].push(fn);
 };
 
-/** Unsubscribe from a network event. */
 export const off = (event, fn) => {
     if (!listeners[event]) return;
     listeners[event] = listeners[event].filter(f => f !== fn);
 };
 
-/** Internal: fire an event to all subscribers. */
 const emit = (event, data) => {
     (listeners[event] || []).forEach(fn => fn(data));
 };
@@ -58,8 +52,13 @@ const emit = (event, data) => {
 let tcpServer = null;
 let tcpClient = null;
 let broadcastTimer = null;
+let reconnectTimer = null;
 let isRunning = false;
 let currentRole = null;
+let currentDeviceInfo = null;
+
+// Module-level clients map so sendMessage() can reach all survivors
+const clients = new Map();
 
 // ─── Mock data for Simulation Mode ───────────────────────────────────────────
 const MOCK_SURVIVORS = [
@@ -73,12 +72,10 @@ const MOCK_MESSAGES = [
     { id: 'm3', sender: 'Marcus Rivera', text: '🆘 Injured, 3rd floor blue building!' },
 ];
 
-/** Launch the fully simulated P2P demo. */
 const startSimulation = (role) => {
     isRunning = true;
     currentRole = role;
 
-    // Brief "scanning" phase, then report connected
     emit('status_change', { status: 'scanning', peerCount: 0 });
 
     setTimeout(() => {
@@ -86,7 +83,6 @@ const startSimulation = (role) => {
     }, 2500);
 
     if (role === 'rescue') {
-        // Drip-feed mock survivors and messages onto the map/chat
         MOCK_SURVIVORS.forEach((s, i) =>
             setTimeout(() => emit('survivor_update', { ...s, timestamp: Date.now() }), 3000 + i * 4000)
         );
@@ -94,7 +90,6 @@ const startSimulation = (role) => {
             setTimeout(() => emit('message_received', { ...m, timestamp: Date.now() - (3 - i) * 20000 }), 5000 + i * 3000)
         );
     } else {
-        // Survivor — simulate "location sent" confirmation then an ACK from rescue
         setTimeout(() => emit('broadcast_sent', {}), 3000);
         setTimeout(() => emit('message_received', {
             id: 'ack1', sender: 'Rescue HQ',
@@ -105,46 +100,87 @@ const startSimulation = (role) => {
 };
 
 // ─── Real TCP Helpers ─────────────────────────────────────────────────────────
-/** Parse raw Buffer from TCP into a JS object. */
 const parse = (buf) => {
     try { return JSON.parse(buf.toString('utf8')); }
     catch { return null; }
 };
 
-/** Route an incoming mesh packet to the correct event. */
-const handle = (msg) => {
+// Broadcast a raw JSON payload to all connected survivor clients (rescue server side)
+const broadcastToClients = (payload) => {
+    const str = JSON.stringify(payload);
+    clients.forEach((socket, key) => {
+        try { socket.write(str); }
+        catch { clients.delete(key); }
+    });
+};
+
+const handle = (msg, senderSocket) => {
     if (!msg?.type) return;
     if (msg.type === 'LOCATION') {
         emit('survivor_update', { id: msg.id, name: msg.name, lat: msg.lat, lon: msg.lon, timestamp: msg.timestamp });
     } else if (msg.type === 'MESSAGE') {
         emit('message_received', { id: `${msg.id}_${msg.timestamp}`, sender: msg.sender, text: msg.text, timestamp: msg.timestamp });
+        // Relay message from one survivor to all others (rescue server acts as relay)
+        if (currentRole === 'rescue' && senderSocket) {
+            broadcastToClients({ ...msg, type: 'MESSAGE' });
+        }
     } else if (msg.type === 'SOS') {
         emit('sos_received', msg);
         emit('survivor_update', { id: msg.id, name: `${msg.name} ⚠️ SOS`, lat: msg.lat, lon: msg.lon, timestamp: msg.timestamp, isSOS: true });
+        // Relay SOS to all connected survivors
+        if (currentRole === 'rescue' && senderSocket) {
+            broadcastToClients({ ...msg, type: 'SOS' });
+        }
+    } else if (msg.type === 'ACK') {
+        // Acknowledgement from rescue server — do nothing (handled silently)
     }
 };
 
-/** Start a TCP server (Rescue Team mode). */
+// ─── Rescue Team: TCP Server ──────────────────────────────────────────────────
 const startTcpServer = () => {
     const TcpSocket = require('react-native-tcp-socket').default;
-    const clients = new Map();
 
     tcpServer = TcpSocket.createServer((socket) => {
         const key = `${socket.remoteAddress}:${socket.remotePort}`;
         clients.set(key, socket);
         emit('status_change', { status: 'connected', peerCount: clients.size });
 
+        // Send a welcome ACK so the survivor knows they connected
+        try {
+            socket.write(JSON.stringify({
+                type: 'MESSAGE',
+                id: `rescue_ack_${Date.now()}`,
+                sender: 'Rescue HQ',
+                text: '✅ Connected to rescue server. Your location is being tracked.',
+                timestamp: Date.now(),
+            }));
+        } catch { }
+
+        let buffer = '';
         socket.on('data', (data) => {
-            const msg = parse(data);
-            if (msg) handle(msg);
-            try { socket.write(JSON.stringify({ type: 'ACK' })); } catch { }
+            buffer += data.toString('utf8');
+            // Handle multiple JSON objects in one chunk (newline-delimited)
+            const parts = buffer.split('\n');
+            buffer = parts.pop(); // keep the incomplete tail
+            parts.forEach(part => {
+                if (!part.trim()) return;
+                const msg = parse(part);
+                if (msg) handle(msg, socket);
+            });
         });
 
         socket.on('close', () => {
             clients.delete(key);
-            emit('status_change', { status: 'connected', peerCount: clients.size });
+            emit('status_change', {
+                status: clients.size > 0 ? 'connected' : 'listening',
+                peerCount: clients.size
+            });
         });
-        socket.on('error', () => clients.delete(key));
+        socket.on('error', () => { clients.delete(key); });
+    });
+
+    tcpServer.on('error', (err) => {
+        emit('status_change', { status: 'error', error: err.message });
     });
 
     tcpServer.listen({ port: P2P_PORT, host: '0.0.0.0' }, () => {
@@ -152,48 +188,93 @@ const startTcpServer = () => {
     });
 };
 
-/** Scan the LAN subnet to find the rescue server (Survivor mode). */
+// ─── Survivor: Scan + Connect ─────────────────────────────────────────────────
 const scanAndConnect = async (deviceInfo) => {
+    if (!isRunning) return;
     const TcpSocket = require('react-native-tcp-socket').default;
+
     const ip = await Network.getIpAddressAsync();
-    if (!ip || ip === '0.0.0.0') { emit('status_change', { status: 'no_wifi' }); return; }
+    if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
+        emit('status_change', { status: 'no_wifi' });
+        scheduleReconnect(deviceInfo);
+        return;
+    }
 
     const subnet = ip.split('.').slice(0, 3).join('.');
     emit('status_change', { status: 'scanning' });
 
-    for (let i = 1; i <= SCAN_END; i++) {
+    let found = false;
+    for (let i = 1; i <= SCAN_END && isRunning; i++) {
         const host = `${subnet}.${i}`;
-        if (ip.endsWith(`.${i}`)) continue; // Skip own IP
+        if (ip === host) continue; // Skip own IP
 
-        const found = await new Promise((resolve) => {
-            const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: 500 }, () => {
+        const connected = await new Promise((resolve) => {
+            let settled = false;
+            const settle = (val) => {
+                if (settled) return;
+                settled = true;
+                resolve(val);
+            };
+
+            const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: TCP_TIMEOUT_MS }, () => {
                 tcpClient = s;
-                // Send location immediately on connect
-                s.write(JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }));
-                emit('status_change', { status: 'connected', serverIP: host });
-                s.on('data', (d) => { const m = parse(d); if (m) handle(m); });
-                s.on('close', () => { tcpClient = null; emit('status_change', { status: 'disconnected' }); });
-                resolve(true);
+                // Send location immediately on connect (newline-delimited)
+                const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
+                try { s.write(payload); } catch { }
+                emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
+
+                let buffer = '';
+                s.on('data', (d) => {
+                    buffer += d.toString('utf8');
+                    const parts = buffer.split('\n');
+                    buffer = parts.pop();
+                    parts.forEach(part => {
+                        if (!part.trim()) return;
+                        const m = parse(part);
+                        if (m) handle(m, null);
+                    });
+                });
+                s.on('close', () => {
+                    tcpClient = null;
+                    if (isRunning) {
+                        emit('status_change', { status: 'not_found' });
+                        scheduleReconnect(deviceInfo);
+                    }
+                });
+                s.on('error', () => { /* handled by close */ });
+                settle(true);
             });
-            s.on('error', () => { s.destroy(); resolve(false); });
-            setTimeout(() => { s.destroy(); resolve(false); }, 600);
+
+            s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
+            setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, TCP_TIMEOUT_MS + 100);
         });
 
-        if (found) break;
+        if (connected) { found = true; break; }
     }
 
-    if (!tcpClient) emit('status_change', { status: 'not_found' });
+    if (!found) {
+        if (isRunning) {
+            emit('status_change', { status: 'not_found' });
+            scheduleReconnect(deviceInfo);
+        }
+    }
+};
+
+const scheduleReconnect = (deviceInfo) => {
+    if (!isRunning || reconnectTimer) return;
+    reconnectTimer = setTimeout(async () => {
+        reconnectTimer = null;
+        if (isRunning && !tcpClient) {
+            await scanAndConnect(deviceInfo);
+        }
+    }, RECONNECT_INTERVAL);
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
-/**
- * Start the network service.
- * @param {'rescue'|'survivor'} role
- * @param {{ id, name, lat, lon }} deviceInfo
- */
 export const start = async (role, deviceInfo) => {
     if (isRunning) return;
     currentRole = role;
+    currentDeviceInfo = deviceInfo;
     isRunning = true;
 
     if (SIMULATION_MODE) { startSimulation(role); return; }
@@ -202,63 +283,71 @@ export const start = async (role, deviceInfo) => {
         startTcpServer();
     } else {
         await scanAndConnect(deviceInfo);
-        // Re-broadcast location every 15 s while connected
-        if (tcpClient) {
-            broadcastTimer = setInterval(() => {
-                if (tcpClient) {
-                    try {
-                        tcpClient.write(JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }));
-                        emit('broadcast_sent', {});
-                    } catch { clearInterval(broadcastTimer); }
-                }
-            }, BROADCAST_INTERVAL);
-        }
+        // Start periodic location broadcast if connected
+        broadcastTimer = setInterval(() => {
+            if (tcpClient && currentDeviceInfo) {
+                try {
+                    const payload = JSON.stringify({
+                        type: 'LOCATION',
+                        ...currentDeviceInfo,
+                        timestamp: Date.now(),
+                    }) + '\n';
+                    tcpClient.write(payload);
+                    emit('broadcast_sent', {});
+                } catch { clearInterval(broadcastTimer); }
+            }
+        }, BROADCAST_INTERVAL);
     }
 };
 
-/** Stop all network activity and free resources. */
 export const stop = () => {
     isRunning = false;
     if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null; }
-    if (tcpClient) { tcpClient.destroy(); tcpClient = null; }
-    if (tcpServer) { tcpServer.close(); tcpServer = null; }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (tcpClient) { try { tcpClient.destroy(); } catch { } tcpClient = null; }
+    if (tcpServer) { try { tcpServer.close(); } catch { } tcpServer = null; }
+    clients.clear();
+    currentDeviceInfo = null;
     emit('status_change', { status: 'stopped' });
 };
 
-/**
- * Send a broadcast text message to all peers.
- * @param {{ id, sender, text }} messageData
- */
 export const sendMessage = (messageData) => {
     const payload = { type: 'MESSAGE', ...messageData, timestamp: Date.now() };
+    const str = JSON.stringify(payload) + '\n';
 
     if (SIMULATION_MODE) {
-        // Echo back to own chat after short delay
-        setTimeout(() => emit('message_received', { ...payload, id: `${payload.id}_echo`, isSelf: true }), 300);
+        setTimeout(() => emit('message_received', {
+            ...payload, id: `${payload.id}_self`, isSelf: true
+        }), 300);
         return;
     }
+
     if (currentRole === 'survivor' && tcpClient) {
-        try { tcpClient.write(JSON.stringify(payload)); } catch { }
+        try { tcpClient.write(str); } catch { }
+        // Also echo to own chat (since rescue relays do NOT echo back to sender)
+        emit('message_received', { ...payload, id: `${payload.id}_self`, isSelf: true });
+    } else if (currentRole === 'rescue') {
+        // Rescue sends message to all connected survivors
+        broadcastToClients(payload);
+        // Echo to own chat
+        emit('message_received', { ...payload, id: `${payload.id}_self`, isSelf: true });
     }
 };
 
-/**
- * Broadcast an SOS emergency signal with current GPS.
- * @param {{ id, name, lat, lon }} deviceInfo
- */
 export const sendSOS = (deviceInfo) => {
     const payload = { type: 'SOS', ...deviceInfo, timestamp: Date.now() };
+    const str = JSON.stringify(payload) + '\n';
 
     if (SIMULATION_MODE) {
         setTimeout(() => emit('message_received', {
             id: 'sos_confirm', sender: 'System',
-            text: '🆘 SOS Alert sent! Rescue team has been notified of your location.',
+            text: '🆘 SOS Alert sent! Rescue team has been notified.',
             timestamp: Date.now(),
         }), 500);
         return;
     }
     if (tcpClient) {
-        try { tcpClient.write(JSON.stringify(payload)); } catch { }
+        try { tcpClient.write(str); } catch { }
     }
 };
 
