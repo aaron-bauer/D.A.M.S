@@ -137,7 +137,7 @@ const handle = (msg, senderSocket) => {
 };
 
 // ─── Rescue Team: TCP Server ──────────────────────────────────────────────────
-const startTcpServer = () => {
+const startTcpServer = async () => {
     let TcpSocket;
     try {
         TcpSocket = require('react-native-tcp-socket').default;
@@ -147,6 +147,21 @@ const startTcpServer = () => {
     }
 
     try {
+        // Wait 1 second for the hotspot interface to fully initialize
+        emit('status_change', { status: 'initializing', peerCount: 0 });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const ip = await Network.getIpAddressAsync();
+        // Check if IP is valid for an Android hotspot (usually 192.168.43.1 or 192.168.44.1, etc.)
+        // If it's 0.0.0.0, 127.0.0.1 or null, the hotspot isn't sharing its network properly yet.
+        if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
+            emit('status_change', {
+                status: 'error',
+                error: 'Hotspot not detected. Please enable your mobile hotspot and try again.'
+            });
+            return;
+        }
+
         tcpServer = TcpSocket.createServer((socket) => {
             const key = `${socket.remoteAddress}:${socket.remotePort}`;
             clients.set(key, socket);

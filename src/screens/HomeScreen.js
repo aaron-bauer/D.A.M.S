@@ -154,7 +154,7 @@ export default function HomeScreen({ navigation }) {
         connected: 'Connected to mesh network',
         not_found: 'No rescue server found',
         no_wifi: 'Not connected to WiFi',
-        error: 'Network error',
+        error: mesh.networkStatus.error ? `Error: ${mesh.networkStatus.error}` : 'Network error',
         stopped: 'Stopped',
     }[mesh.networkStatus.status] || mesh.networkStatus.status;
 
@@ -224,13 +224,16 @@ export default function HomeScreen({ navigation }) {
                     </View>
                 )}
 
-                {/* Start / Stop Button */}
+                {/* Start / Stop / Retry Button */}
                 <TouchableOpacity
-                    style={[styles.mainBtn, active ? styles.stopBtn : styles.startBtn]}
+                    style={[
+                        styles.mainBtn,
+                        active ? styles.stopBtn : (mesh.networkStatus.status === 'error' ? styles.retryBtn : styles.startBtn)
+                    ]}
                     onPress={handleToggleNetwork}
                 >
                     <Text style={styles.mainBtnText}>
-                        {active ? '⏹  Stop Network' : '▶  Start Network'}
+                        {active ? '⏹  Stop Network' : (mesh.networkStatus.status === 'error' ? '🔄  Retry Network' : '▶  Start Network')}
                     </Text>
                 </TouchableOpacity>
 
@@ -272,6 +275,7 @@ const styles = StyleSheet.create({
     mainBtn: { paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginBottom: 12 },
     startBtn: { backgroundColor: '#0A84FF' },
     stopBtn: { backgroundColor: '#30363D' },
+    retryBtn: { backgroundColor: '#E0A800', borderWidth: 1, borderColor: '#FFD60A' },
     mainBtnText: { color: '#F0F6FC', fontSize: 17, fontWeight: '800', letterSpacing: 1 },
     sosBtn: { backgroundColor: '#FF3B30', paddingVertical: 20, borderRadius: 14, alignItems: 'center' },
     sosBtnText: { color: '#FFFFFF', fontSize: 20, fontWeight: '900', letterSpacing: 2 },
