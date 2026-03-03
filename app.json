@@ -4,6 +4,7 @@
         "slug": "disaster-aid-management-system",
         "version": "1.0.0",
         "orientation": "portrait",
+        "icon": "./assets/icon.png",
         "userInterfaceStyle": "dark",
         "splash": {
             "resizeMode": "contain",
@@ -20,6 +21,7 @@
         },
         "android": {
             "adaptiveIcon": {
+                "foregroundImage": "./assets/icon.png",
                 "backgroundColor": "#0D1117"
             },
             "package": "com.school.dams",
@@ -30,7 +32,8 @@
                 "CHANGE_WIFI_STATE",
                 "CHANGE_NETWORK_STATE",
                 "INTERNET",
-                "ACCESS_NETWORK_STATE"
+                "ACCESS_NETWORK_STATE",
+                "NEARBY_WIFI_DEVICES"
             ]
         },
         "plugins": [

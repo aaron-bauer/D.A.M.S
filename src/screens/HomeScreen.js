@@ -13,7 +13,7 @@
 import React, { useEffect, useState } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
-    SafeAreaView, Alert, ScrollView, StatusBar, Platform,
+    SafeAreaView, Alert, ScrollView, StatusBar, Platform, Linking
 } from 'react-native';
 
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
@@ -79,8 +79,25 @@ export default function HomeScreen({ navigation }) {
         };
 
         // Start the P2P network module
-        await NetworkService.start(mesh.role, deviceInfo);
-        setActive(true);
+        try {
+            await NetworkService.start(mesh.role, deviceInfo);
+            setActive(true);
+        } catch (err) {
+            Alert.alert('Network Error', 'Failed to start mesh network: ' + err.message);
+        }
+    };
+
+    const handleOpenHotspot = () => {
+        if (Platform.OS === 'android') {
+            Linking.sendIntent('android.settings.WIRELESS_SETTINGS');
+            // Alternatively: Linking.sendIntent('android.settings.TETHER_SETTINGS');
+            // Most androids use TETHER_SETTINGS for Hotspot
+            Linking.openSettings().catch(() => {
+                Alert.alert('Error', 'Could not open settings automatically.');
+            });
+        } else {
+            Linking.openSettings();
+        }
     };
 
     // ─── SOS ──────────────────────────────────────────────────────────────────
@@ -131,6 +148,7 @@ export default function HomeScreen({ navigation }) {
     const isSurvivor = mesh.role === 'survivor';
     const statusLabel = {
         idle: 'Offline — Press Start',
+        initializing: 'Initializing network components…',
         scanning: 'Scanning for rescue server…',
         listening: 'Listening for survivors…',
         connected: 'Connected to mesh network',
@@ -191,6 +209,9 @@ export default function HomeScreen({ navigation }) {
                             Enable your phone's mobile hotspot, then press Start.{'\n'}
                             Survivors connect to your hotspot and are automatically found.
                         </Text>
+                        <TouchableOpacity style={styles.linkBtn} onPress={handleOpenHotspot}>
+                            <Text style={styles.linkBtnText}>⚙️ Open Hotspot Settings</Text>
+                        </TouchableOpacity>
                     </View>
                 )}
                 {isSurvivor && (
@@ -259,4 +280,6 @@ const styles = StyleSheet.create({
         borderWidth: 1, borderColor: '#30363D', backgroundColor: '#161B22',
     },
     changeRoleBtnText: { color: '#8B949E', fontSize: 14, fontWeight: '600' },
+    linkBtn: { marginTop: 15, paddingVertical: 8, paddingHorizontal: 15, borderRadius: 8, backgroundColor: '#30363D' },
+    linkBtnText: { color: '#0A84FF', fontSize: 14, fontWeight: '700' },
 });

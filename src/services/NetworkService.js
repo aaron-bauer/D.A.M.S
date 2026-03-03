@@ -138,60 +138,76 @@ const handle = (msg, senderSocket) => {
 
 // ─── Rescue Team: TCP Server ──────────────────────────────────────────────────
 const startTcpServer = () => {
-    const TcpSocket = require('react-native-tcp-socket').default;
+    let TcpSocket;
+    try {
+        TcpSocket = require('react-native-tcp-socket').default;
+    } catch (e) {
+        emit('status_change', { status: 'error', error: 'TCP Socket module not found' });
+        return;
+    }
 
-    tcpServer = TcpSocket.createServer((socket) => {
-        const key = `${socket.remoteAddress}:${socket.remotePort}`;
-        clients.set(key, socket);
-        emit('status_change', { status: 'connected', peerCount: clients.size });
+    try {
+        tcpServer = TcpSocket.createServer((socket) => {
+            const key = `${socket.remoteAddress}:${socket.remotePort}`;
+            clients.set(key, socket);
+            emit('status_change', { status: 'connected', peerCount: clients.size });
 
-        // Send a welcome ACK so the survivor knows they connected
-        try {
-            socket.write(JSON.stringify({
-                type: 'MESSAGE',
-                id: `rescue_ack_${Date.now()}`,
-                sender: 'Rescue HQ',
-                text: '✅ Connected to rescue server. Your location is being tracked.',
-                timestamp: Date.now(),
-            }));
-        } catch { }
+            // Send a welcome ACK so the survivor knows they connected
+            try {
+                socket.write(JSON.stringify({
+                    type: 'MESSAGE',
+                    id: `rescue_ack_${Date.now()}`,
+                    sender: 'Rescue HQ',
+                    text: '✅ Connected to rescue server. Your location is being tracked.',
+                    timestamp: Date.now(),
+                }));
+            } catch { }
 
-        let buffer = '';
-        socket.on('data', (data) => {
-            buffer += data.toString('utf8');
-            // Handle multiple JSON objects in one chunk (newline-delimited)
-            const parts = buffer.split('\n');
-            buffer = parts.pop(); // keep the incomplete tail
-            parts.forEach(part => {
-                if (!part.trim()) return;
-                const msg = parse(part);
-                if (msg) handle(msg, socket);
+            let buffer = '';
+            socket.on('data', (data) => {
+                buffer += data.toString('utf8');
+                // Handle multiple JSON objects in one chunk (newline-delimited)
+                const parts = buffer.split('\n');
+                buffer = parts.pop(); // keep the incomplete tail
+                parts.forEach(part => {
+                    if (!part.trim()) return;
+                    const msg = parse(part);
+                    if (msg) handle(msg, socket);
+                });
             });
+
+            socket.on('close', () => {
+                clients.delete(key);
+                emit('status_change', {
+                    status: clients.size > 0 ? 'connected' : 'listening',
+                    peerCount: clients.size
+                });
+            });
+            socket.on('error', () => { clients.delete(key); });
         });
 
-        socket.on('close', () => {
-            clients.delete(key);
-            emit('status_change', {
-                status: clients.size > 0 ? 'connected' : 'listening',
-                peerCount: clients.size
-            });
+        tcpServer.on('error', (err) => {
+            emit('status_change', { status: 'error', error: err.message });
         });
-        socket.on('error', () => { clients.delete(key); });
-    });
 
-    tcpServer.on('error', (err) => {
-        emit('status_change', { status: 'error', error: err.message });
-    });
-
-    tcpServer.listen({ port: P2P_PORT, host: '0.0.0.0' }, () => {
-        emit('status_change', { status: 'listening', peerCount: 0 });
-    });
+        tcpServer.listen({ port: P2P_PORT, host: '0.0.0.0' }, () => {
+            emit('status_change', { status: 'listening', peerCount: 0 });
+        });
+    } catch (err) {
+        emit('status_change', { status: 'error', error: 'Server error: ' + err.message });
+    }
 };
 
 // ─── Survivor: Scan + Connect ─────────────────────────────────────────────────
 const scanAndConnect = async (deviceInfo) => {
     if (!isRunning) return;
-    const TcpSocket = require('react-native-tcp-socket').default;
+    let TcpSocket;
+    try {
+        TcpSocket = require('react-native-tcp-socket').default;
+    } catch (e) {
+        emit('status_change', { status: 'error', error: 'TCP Socket module not found' });
+        return;
+    }
 
     const ip = await Network.getIpAddressAsync();
     if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
@@ -278,6 +294,8 @@ export const start = async (role, deviceInfo) => {
     isRunning = true;
 
     if (SIMULATION_MODE) { startSimulation(role); return; }
+
+    emit('status_change', { status: 'initializing', peerCount: 0 });
 
     if (role === 'rescue') {
         startTcpServer();
