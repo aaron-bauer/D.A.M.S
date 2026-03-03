@@ -140,9 +140,15 @@ const handle = (msg, senderSocket) => {
 const startTcpServer = async () => {
     let TcpSocket;
     try {
-        TcpSocket = require('react-native-tcp-socket').default;
+        const mod = require('react-native-tcp-socket');
+        TcpSocket = mod.default || mod;
     } catch (e) {
         emit('status_change', { status: 'error', error: 'TCP Socket module not found' });
+        return;
+    }
+
+    if (!TcpSocket || !TcpSocket.createServer) {
+        emit('status_change', { status: 'error', error: 'Failed to initialize TCP Socket module (check native build)' });
         return;
     }
 
@@ -218,9 +224,15 @@ const scanAndConnect = async (deviceInfo) => {
     if (!isRunning) return;
     let TcpSocket;
     try {
-        TcpSocket = require('react-native-tcp-socket').default;
+        const mod = require('react-native-tcp-socket');
+        TcpSocket = mod.default || mod;
     } catch (e) {
         emit('status_change', { status: 'error', error: 'TCP Socket module not found' });
+        return;
+    }
+
+    if (!TcpSocket || !TcpSocket.createConnection) {
+        emit('status_change', { status: 'error', error: 'Failed to initialize TCP Socket module (check native build)' });
         return;
     }
 
