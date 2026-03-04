@@ -25,7 +25,8 @@ import * as Network from 'expo-network';
  */
 export const SIMULATION_MODE = false;
 
-const P2P_PORT = 8080;           // TCP port for all mesh traffic (changed from 4747)
+const P2P_PORT = 8080;           // TCP port for all mesh traffic
+const UDP_BEACON_PORT = 8888;    // UDP port for rescue-beacon broadcasts
 const BROADCAST_INTERVAL = 15000; // Survivors re-send location every 15 s
 const RECONNECT_INTERVAL = 30000; // Survivors retry connection every 30 s
 const TCP_TIMEOUT_MS = 1500;      // Connection attempt timeout (ms)
@@ -61,7 +62,10 @@ const emit = (event, data) => {
 // ─── Internal State ───────────────────────────────────────────────────────────
 let tcpServer = null;
 let tcpClient = null;
+let udpBeacon = null;   // Rescue: UDP socket for broadcasting
+let udpListener = null; // Survivor: UDP socket for listening to beacons
 let broadcastTimer = null;
+let beaconTimer = null;
 let reconnectTimer = null;
 let isRunning = false;
 let currentRole = null;
@@ -468,12 +472,107 @@ const scanAndConnect = async (deviceInfo) => {
     return false;
 };
 
+// ─── UDP Beacon: Rescue broadcasts, Survivor discovers ────────────────────────────────────
+const startUdpBeacon = () => {
+    const TcpSocket = getTcpSocket();
+    if (!TcpSocket || !TcpSocket.createSocket) return;
+    try {
+        udpBeacon = TcpSocket.createSocket({ type: 'udp4', reusePort: true });
+        udpBeacon.bind(0, '0.0.0.0', async () => {
+            try { udpBeacon.setBroadcast(true); } catch { }
+            const sendBeacon = () => {
+                if (!isRunning || !udpBeacon) return;
+                try {
+                    const msg = JSON.stringify({ type: 'DAMS_BEACON', port: P2P_PORT });
+                    const buf = Buffer.from ? Buffer.from(msg) : msg;
+                    udpBeacon.send(buf, 0, msg.length, UDP_BEACON_PORT, '255.255.255.255');
+                    emit('status_change', { status: 'listening', peerCount: clients.size });
+                } catch { }
+            };
+            sendBeacon();
+            beaconTimer = setInterval(sendBeacon, 2000);
+        });
+        udpBeacon.on('error', () => { /* ignore beacon errors */ });
+    } catch { }
+};
+
+const listenForBeacon = (deviceInfo) => {
+    if (!isRunning) return;
+    const TcpSocket = getTcpSocket();
+    if (!TcpSocket || !TcpSocket.createSocket) {
+        // Fall back to scan if UDP not supported
+        scanAndConnect(deviceInfo);
+        return;
+    }
+    emit('status_change', { status: 'scanning', error: 'Listening for rescue beacon...' });
+    try {
+        udpListener = TcpSocket.createSocket({ type: 'udp4', reusePort: true });
+        udpListener.bind(UDP_BEACON_PORT, '0.0.0.0', () => {
+            try { udpListener.setBroadcast(true); } catch { }
+        });
+        udpListener.on('message', async (data, rinfo) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                if (msg.type !== 'DAMS_BEACON') return;
+                // Beacon received! The sender's address IS the rescue IP
+                const rescueIP = rinfo.address;
+                emit('status_change', { status: 'scanning', error: `📡 Beacon from ${rescueIP}! Connecting...` });
+                // Close listener — we found it
+                try { udpListener.close(); udpListener = null; } catch { }
+                // Connect via TCP
+                const TcpSock = getTcpSocket();
+                if (!TcpSock) return;
+                const s = TcpSock.createConnection({ host: rescueIP, port: P2P_PORT, timeout: 5000 }, () => {
+                    tcpClient = s;
+                    const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
+                    try { s.write(payload); } catch { }
+                    emit('status_change', { status: 'connected', serverIP: rescueIP, peerCount: 1 });
+                    s.on('data', (d) => {
+                        let buf = '';
+                        buf += d.toString('utf8');
+                        buf.split('\n').filter(Boolean).forEach(part => {
+                            const m = parse(part);
+                            if (m) handle(m, null);
+                        });
+                    });
+                    s.on('close', () => {
+                        tcpClient = null;
+                        if (isRunning) {
+                            emit('status_change', { status: 'not_found' });
+                            listenForBeacon(deviceInfo);
+                        }
+                    });
+                });
+                s.on('error', () => {
+                    try { s.destroy(); } catch { }
+                    emit('status_change', { status: 'error', error: `Beacon found ${rescueIP} but TCP failed. Retrying...` });
+                    if (isRunning) setTimeout(() => listenForBeacon(deviceInfo), 3000);
+                });
+            } catch { }
+        });
+        udpListener.on('error', () => {
+            // UDP failed, fall back to scan
+            emit('status_change', { status: 'scanning', error: 'UDP failed, falling back to scan...' });
+            scanAndConnect(deviceInfo);
+        });
+        // Also run a scan in parallel as fallback (in 5 seconds)
+        setTimeout(() => {
+            if (isRunning && !tcpClient && udpListener) {
+                emit('status_change', { status: 'scanning', error: 'No beacon yet, starting scan fallback...' });
+                scanAndConnect(deviceInfo);
+            }
+        }, 5000);
+    } catch {
+        scanAndConnect(deviceInfo);
+    }
+};
+
 const scheduleReconnect = (deviceInfo) => {
     if (!isRunning || reconnectTimer) return;
     reconnectTimer = setTimeout(async () => {
         reconnectTimer = null;
         if (isRunning && !tcpClient) {
-            await scanAndConnect(deviceInfo);
+            listenForBeacon(deviceInfo);
         }
     }, RECONNECT_INTERVAL);
 };
@@ -501,8 +600,11 @@ export const start = async (role, deviceInfo, options = {}) => {
             isRunning = false;
             return false;
         }
+        // Start UDP beacon so survivors can discover us
+        startUdpBeacon();
     } else {
-        const success = await scanAndConnect(deviceInfo);
+        // Survivor: listen for UDP beacon first, fall back to scan
+        listenForBeacon(deviceInfo);
         // Start periodic location broadcast if connected
         broadcastTimer = setInterval(() => {
             if (tcpClient && currentDeviceInfo) {
@@ -517,20 +619,17 @@ export const start = async (role, deviceInfo, options = {}) => {
                 } catch { clearInterval(broadcastTimer); }
             }
         }, BROADCAST_INTERVAL);
-
-        if (!success) {
-            // We return true even if scan fails, because the background reconnect loop is active
-            // However, the UI might want to know if immediate connection happened.
-            // For consistency with Rescue, if it's 'not_found' but loop is active, we return true.
-        }
     }
     return true;
 };
 
 export const stop = () => {
     isRunning = false;
+    if (beaconTimer) { clearInterval(beaconTimer); beaconTimer = null; }
     if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null; }
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (udpBeacon) { try { udpBeacon.close(); } catch { } udpBeacon = null; }
+    if (udpListener) { try { udpListener.close(); } catch { } udpListener = null; }
     if (tcpClient) { try { tcpClient.destroy(); } catch { } tcpClient = null; }
     if (tcpServer) { try { tcpServer.close(); } catch { } tcpServer = null; }
     clients.clear();
