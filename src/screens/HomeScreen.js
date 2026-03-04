@@ -100,11 +100,12 @@ export default function HomeScreen({ navigation }) {
 
     const handleOpenHotspot = () => {
         if (Platform.OS === 'android') {
-            Linking.sendIntent('android.settings.WIRELESS_SETTINGS');
-            // Alternatively: Linking.sendIntent('android.settings.TETHER_SETTINGS');
-            // Most androids use TETHER_SETTINGS for Hotspot
-            Linking.openSettings().catch(() => {
-                Alert.alert('Error', 'Could not open settings automatically.');
+            Linking.sendIntent('android.settings.TETHER_SETTINGS').catch(() => {
+                Linking.sendIntent('android.settings.WIRELESS_SETTINGS').catch(() => {
+                    Linking.openSettings().catch(() => {
+                        Alert.alert('Error', 'Could not open settings automatically.');
+                    });
+                });
             });
         } else {
             Linking.openSettings();

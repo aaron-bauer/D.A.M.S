@@ -153,11 +153,12 @@ const startTcpServer = async (options = {}) => {
     }
 
     try {
-        // Wait 2 seconds for the hotspot interface to fully initialize
+        // Wait 3 seconds for the hotspot interface to fully initialize
         emit('status_change', { status: 'initializing', peerCount: 0 });
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         const ip = await Network.getIpAddressAsync();
+        const networkState = await Network.getNetworkStateAsync();
 
         // Skip IP check if force flag is set
         if (!options.force) {
@@ -166,7 +167,7 @@ const startTcpServer = async (options = {}) => {
             if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
                 emit('status_change', {
                     status: 'error',
-                    error: `Hotspot not detected (IP found: ${ip || 'none'}). Please ensure mobile hotspot is on.`
+                    error: `Hotspot not detected (IP: ${ip || 'none'}, State: ${networkState.type}). If your hotspot is ON, please tap "⚠️ Force Start Anyway" below.`
                 });
                 return;
             }
