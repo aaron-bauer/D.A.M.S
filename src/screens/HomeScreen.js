@@ -31,6 +31,7 @@ export default function HomeScreen({ navigation }) {
     const dispatch = useDispatch();
     const [active, setActive] = useState(false);
     const [lastLocation, setLastLocation] = useState(null);
+    const [showDiagnostics, setShowDiagnostics] = useState(false);
 
     // Load last known location on mount
     useEffect(() => {
@@ -206,6 +207,38 @@ export default function HomeScreen({ navigation }) {
                                 : `📡 Connected to rescue server`}
                         </Text>
                     )}
+
+                    {/* Quick Diagnostic Link */}
+                    {(mesh.networkStatus.status === 'scanning' || mesh.networkStatus.status === 'error' || mesh.networkStatus.status === 'no_wifi') && (
+                        <TouchableOpacity
+                            style={styles.diagToggle}
+                            onPress={() => setShowDiagnostics(!showDiagnostics)}
+                        >
+                            <Text style={styles.diagToggleText}>
+                                {showDiagnostics ? '🔼 Hide Diagnostics' : '🔽 Show Connection Diagnostics'}
+                            </Text>
+                        </TouchableOpacity>
+                    )}
+
+                    {showDiagnostics && (
+                        <View style={styles.diagCard}>
+                            <Text style={styles.diagTitle}>🔍 Diagnostic Details</Text>
+                            <Text style={styles.diagText}>• Status: {mesh.networkStatus.status}</Text>
+                            {isSurvivor && (
+                                <>
+                                    <Text style={styles.diagText}>• Scanning Speed: Turbo (Parallel)</Text>
+                                    <Text style={styles.diagText}>• Subnet Info: {mesh.networkStatus.error || 'N/A'}</Text>
+                                    <Text style={styles.diagText}>• Tip: Check if Hotspot is "2.4GHz" mode</Text>
+                                </>
+                            )}
+                            {isRescue && (
+                                <>
+                                    <Text style={styles.diagText}>• Server Port: 4747</Text>
+                                    <Text style={styles.diagText}>• Note: 0.0.0.0 is OK for hotspots</Text>
+                                </>
+                            )}
+                        </View>
+                    )}
                 </View>
 
                 {/* GPS Info */}
@@ -317,4 +350,12 @@ const styles = StyleSheet.create({
     changeRoleBtnText: { color: '#8B949E', fontSize: 14, fontWeight: '600' },
     linkBtn: { marginTop: 15, paddingVertical: 8, paddingHorizontal: 15, borderRadius: 8, backgroundColor: '#30363D' },
     linkBtnText: { color: '#0A84FF', fontSize: 14, fontWeight: '700' },
+    diagToggle: { marginTop: 15, padding: 8 },
+    diagToggleText: { color: '#E0A800', fontSize: 13, fontWeight: '700', textDecorationLine: 'underline' },
+    diagCard: {
+        marginTop: 15, padding: 12, backgroundColor: '#0D1117', borderRadius: 10,
+        borderWidth: 1, borderColor: '#30363D', width: '100%'
+    },
+    diagTitle: { color: '#F0F6FC', fontSize: 13, fontWeight: '800', marginBottom: 6 },
+    diagText: { color: '#8B949E', fontSize: 12, marginBottom: 4, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
 });

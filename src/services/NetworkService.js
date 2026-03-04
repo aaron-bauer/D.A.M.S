@@ -247,49 +247,59 @@ const tryScanSubnet = async (subnet, ownIP, deviceInfo) => {
     if (!isRunning) return false;
     emit('status_change', { status: 'scanning', error: `Scanning subnet ${subnet}.x...` });
 
-    for (let i = 1; i <= SCAN_END && isRunning; i++) {
-        const host = `${subnet}.${i}`;
-        if (ownIP === host) continue;
+    const CONCURRENCY = 15; // Scan 15 IPs at a time
+    for (let i = 1; i <= SCAN_END && isRunning; i += CONCURRENCY) {
+        const tasks = [];
+        for (let j = 0; j < CONCURRENCY && (i + j) <= SCAN_END; j++) {
+            const host = `${subnet}.${i + j}`;
+            if (ownIP === host) continue;
 
-        const connected = await new Promise((resolve) => {
-            let settled = false;
-            const settle = (val) => { if (settled) return; settled = true; resolve(val); };
+            tasks.push((async () => {
+                return new Promise((resolve) => {
+                    let settled = false;
+                    const settle = (val) => { if (settled) return; settled = true; resolve(val); };
 
-            const TcpSocket = getTcpSocket();
-            if (!TcpSocket) return settle(false);
+                    const TcpSocket = getTcpSocket();
+                    if (!TcpSocket) return settle(false);
 
-            const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: TCP_TIMEOUT_MS }, () => {
-                tcpClient = s;
-                const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
-                try { s.write(payload); } catch { }
-                emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
+                    const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: TCP_TIMEOUT_MS }, () => {
+                        tcpClient = s;
+                        const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
+                        try { s.write(payload); } catch { }
+                        emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
 
-                let buffer = '';
-                s.on('data', (d) => {
-                    buffer += d.toString('utf8');
-                    const parts = buffer.split('\n');
-                    buffer = parts.pop();
-                    parts.forEach(part => {
-                        if (!part.trim()) return;
-                        const m = parse(part);
-                        if (m) handle(m, null);
+                        let buffer = '';
+                        s.on('data', (d) => {
+                            buffer += d.toString('utf8');
+                            const parts = buffer.split('\n');
+                            buffer = parts.pop();
+                            parts.forEach(part => {
+                                if (!part.trim()) return;
+                                const m = parse(part);
+                                if (m) handle(m, null);
+                            });
+                        });
+                        s.on('close', () => {
+                            tcpClient = null;
+                            if (isRunning) {
+                                emit('status_change', { status: 'not_found' });
+                                scheduleReconnect(deviceInfo);
+                            }
+                        });
+                        settle(true);
                     });
-                });
-                s.on('close', () => {
-                    tcpClient = null;
-                    if (isRunning) {
-                        emit('status_change', { status: 'not_found' });
-                        scheduleReconnect(deviceInfo);
-                    }
-                });
-                settle(true);
-            });
 
-            s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
-            setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, TCP_TIMEOUT_MS + 100);
-        });
+                    s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
+                    setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, TCP_TIMEOUT_MS + 100);
+                });
+            })());
+        }
 
-        if (connected) return true;
+        const results = await Promise.all(tasks);
+        if (results.some(r => r === true)) return true;
+
+        // Brief pause to let the UI update and not overwhelm the network stack
+        await new Promise(r => setTimeout(r, 50));
     }
     return false;
 };
@@ -307,12 +317,16 @@ const scanAndConnect = async (deviceInfo) => {
 
     // If no WiFi/IP, try fallback subnets known for Android hotspots
     if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
-        const fallbacks = ['192.168.43', '192.168.49', '192.168.44', '192.168.1'];
+        const fallbacks = [
+            '192.168.43', '192.168.49', '192.168.44',
+            '192.168.45', '192.168.46', '192.168.47',
+            '192.168.1', '192.168.0', '10.42.0'
+        ];
         for (const sub of fallbacks) {
             if (await tryScanSubnet(sub, '0.0.0.0', deviceInfo)) return true;
         }
 
-        emit('status_change', { status: 'no_wifi', error: 'No WiFi IP found. Please connect to the Rescue Hotspot.' });
+        emit('status_change', { status: 'no_wifi', error: 'No WiFi IP found. Exhaustive scanning failed.' });
         scheduleReconnect(deviceInfo);
         return false;
     }
@@ -321,7 +335,10 @@ const scanAndConnect = async (deviceInfo) => {
     if (await tryScanSubnet(subnet, ip, deviceInfo)) return true;
 
     // If own subnet failed, maybe the hotspot is on a different standard subnet
-    const standardHotspots = ['192.168.43', '192.168.49'].filter(s => s !== subnet);
+    const standardHotspots = [
+        '192.168.43', '192.168.49', '192.168.44',
+        '192.168.45', '192.168.46', '192.168.47'
+    ].filter(s => s !== subnet);
     for (const sub of standardHotspots) {
         if (await tryScanSubnet(sub, ip, deviceInfo)) return true;
     }
