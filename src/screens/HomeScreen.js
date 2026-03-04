@@ -167,13 +167,13 @@ export default function HomeScreen({ navigation }) {
     const isSurvivor = mesh.role === 'survivor';
     const statusLabel = {
         idle: 'Offline — Press Start',
-        initializing: 'Initializing network components…',
-        scanning: 'Scanning for rescue server…',
-        listening: 'Listening for survivors…',
-        connected: 'Connected to mesh network',
+        initializing: mesh.networkStatus.error || 'Initializing network components…',
+        scanning: mesh.networkStatus.error || 'Scanning for rescue server…',
+        listening: '🛡️ Listening for survivors…',
+        connected: '✅ Connected to mesh network',
         not_found: 'No rescue server found',
-        no_wifi: 'Not connected to WiFi',
-        error: mesh.networkStatus.error ? `Error: ${mesh.networkStatus.error}` : 'Network error',
+        no_wifi: mesh.networkStatus.error || 'Not connected to WiFi',
+        error: mesh.networkStatus.error ? `⚠️ Error: ${mesh.networkStatus.error}` : 'Network error',
         stopped: 'Stopped',
     }[mesh.networkStatus.status] || mesh.networkStatus.status;
 
@@ -256,8 +256,8 @@ export default function HomeScreen({ navigation }) {
                     </Text>
                 </TouchableOpacity>
 
-                {/* Force Start Button (Rescue only, Error state) */}
-                {isRescue && mesh.networkStatus.status === 'error' && !active && (
+                {/* Force Start / Direct Retry (Rescue only, Not Active) */}
+                {isRescue && !active && (
                     <TouchableOpacity
                         style={[styles.mainBtn, styles.forceBtn]}
                         onPress={handleForceStart}

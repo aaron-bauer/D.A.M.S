@@ -161,12 +161,10 @@ const startTcpServer = async (options = {}) => {
         // Skip IP polling if force flag is set
         if (!options.force) {
             // Poll for IP address (up to 5 attempts, once per second)
-            // This gives the OS time to assign the hotspot IP.
             for (let attempt = 1; attempt <= 5; attempt++) {
                 ip = await Network.getIpAddressAsync();
                 networkState = await Network.getNetworkStateAsync();
 
-                // If we found a valid local IP, break early
                 if (ip && ip !== '0.0.0.0' && ip !== '127.0.0.1') {
                     break;
                 }
@@ -174,19 +172,18 @@ const startTcpServer = async (options = {}) => {
                 if (attempt < 5) {
                     emit('status_change', {
                         status: 'initializing',
-                        error: `Checking hotspot... (Attempt ${attempt}/5)`
+                        error: `Checking hotspot status... (${attempt}/5)`
                     });
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
 
-            // Final check after polling
+            // If still no IP, we DON'T block. We start anyway but notify.
             if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
                 emit('status_change', {
-                    status: 'error',
-                    error: `Hotspot not detected (IP: ${ip || 'none'}, State: ${networkState.type}). If your hotspot is ON, please tap "⚠️ Force Start Anyway" below.`
+                    status: 'initializing',
+                    error: `Hotspot IP unknown (normal for some phones). Starting server...`
                 });
-                return false;
             }
         }
 
@@ -243,89 +240,101 @@ const startTcpServer = async (options = {}) => {
     }
 };
 
-// ─── Survivor: Scan + Connect ─────────────────────────────────────────────────
+const tryScanSubnet = async (subnet, ownIP, deviceInfo) => {
+    if (!isRunning) return false;
+    emit('status_change', { status: 'scanning', error: `Scanning subnet ${subnet}.x...` });
+
+    for (let i = 1; i <= SCAN_END && isRunning; i++) {
+        const host = `${subnet}.${i}`;
+        if (ownIP === host) continue;
+
+        const connected = await new Promise((resolve) => {
+            let settled = false;
+            const settle = (val) => { if (settled) return; settled = true; resolve(val); };
+
+            const s = require('react-native-tcp-socket').default.createConnection(
+                { host, port: P2P_PORT, timeout: TCP_TIMEOUT_MS },
+                () => {
+                    tcpClient = s;
+                    const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
+                    try { s.write(payload); } catch { }
+                    emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
+
+                    let buffer = '';
+                    s.on('data', (d) => {
+                        buffer += d.toString('utf8');
+                        const parts = buffer.split('\n');
+                        buffer = parts.pop();
+                        parts.forEach(part => {
+                            if (!part.trim()) return;
+                            const m = parse(part);
+                            if (m) handle(m, null);
+                        });
+                    });
+                    s.on('close', () => {
+                        tcpClient = null;
+                        if (isRunning) {
+                            emit('status_change', { status: 'not_found' });
+                            scheduleReconnect(deviceInfo);
+                        }
+                    });
+                    settle(true);
+                }
+            );
+
+            s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
+            setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, TCP_TIMEOUT_MS + 100);
+        });
+
+        if (connected) return true;
+    }
+    return false;
+};
+
 const scanAndConnect = async (deviceInfo) => {
-    if (!isRunning) return;
+    if (!isRunning) return false;
     let TcpSocket;
     try {
         const mod = require('react-native-tcp-socket');
         TcpSocket = mod.default || mod;
     } catch (e) {
         emit('status_change', { status: 'error', error: 'TCP Socket module not found' });
-        return;
+        return false;
     }
 
     if (!TcpSocket || !TcpSocket.createConnection) {
-        emit('status_change', { status: 'error', error: 'Failed to initialize TCP Socket module (check native build)' });
-        return;
+        emit('status_change', { status: 'error', error: 'Failed to initialize TCP Socket module' });
+        return false;
     }
 
     const ip = await Network.getIpAddressAsync();
+
+    // If no WiFi/IP, try fallback subnets known for Android hotspots
     if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
-        emit('status_change', { status: 'no_wifi' });
+        const fallbacks = ['192.168.43', '192.168.49', '192.168.44', '192.168.1'];
+        for (const sub of fallbacks) {
+            if (await tryScanSubnet(sub, '0.0.0.0', deviceInfo)) return true;
+        }
+
+        emit('status_change', { status: 'no_wifi', error: 'No WiFi IP found. Please connect to the Rescue Hotspot.' });
         scheduleReconnect(deviceInfo);
-        return;
+        return false;
     }
 
     const subnet = ip.split('.').slice(0, 3).join('.');
-    emit('status_change', { status: 'scanning' });
+    if (await tryScanSubnet(subnet, ip, deviceInfo)) return true;
 
-    let found = false;
-    for (let i = 1; i <= SCAN_END && isRunning; i++) {
-        const host = `${subnet}.${i}`;
-        if (ip === host) continue; // Skip own IP
-
-        const connected = await new Promise((resolve) => {
-            let settled = false;
-            const settle = (val) => {
-                if (settled) return;
-                settled = true;
-                resolve(val);
-            };
-
-            const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: TCP_TIMEOUT_MS }, () => {
-                tcpClient = s;
-                // Send location immediately on connect (newline-delimited)
-                const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
-                try { s.write(payload); } catch { }
-                emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
-
-                let buffer = '';
-                s.on('data', (d) => {
-                    buffer += d.toString('utf8');
-                    const parts = buffer.split('\n');
-                    buffer = parts.pop();
-                    parts.forEach(part => {
-                        if (!part.trim()) return;
-                        const m = parse(part);
-                        if (m) handle(m, null);
-                    });
-                });
-                s.on('close', () => {
-                    tcpClient = null;
-                    if (isRunning) {
-                        emit('status_change', { status: 'not_found' });
-                        scheduleReconnect(deviceInfo);
-                    }
-                });
-                s.on('error', () => { /* handled by close */ });
-                settle(true);
-            });
-
-            s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
-            setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, TCP_TIMEOUT_MS + 100);
-        });
-
-        if (connected) { found = true; break; }
+    // If own subnet failed, maybe the hotspot is on a different standard subnet
+    const standardHotspots = ['192.168.43', '192.168.49'].filter(s => s !== subnet);
+    for (const sub of standardHotspots) {
+        if (await tryScanSubnet(sub, ip, deviceInfo)) return true;
     }
 
-    if (!found) {
-        if (isRunning) {
-            emit('status_change', { status: 'not_found' });
-            scheduleReconnect(deviceInfo);
-        }
+    if (isRunning) {
+        emit('status_change', { status: 'not_found' });
+        scheduleReconnect(deviceInfo);
     }
-    return found;
+    return false;
 };
 
 const scheduleReconnect = (deviceInfo) => {
