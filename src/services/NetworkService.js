@@ -149,27 +149,44 @@ const startTcpServer = async (options = {}) => {
 
     if (!TcpSocket || !TcpSocket.createServer) {
         emit('status_change', { status: 'error', error: 'Failed to initialize TCP Socket module (check native build)' });
-        return;
+        return false;
     }
 
     try {
-        // Wait 3 seconds for the hotspot interface to fully initialize
         emit('status_change', { status: 'initializing', peerCount: 0 });
-        await new Promise(resolve => setTimeout(resolve, 3000));
 
-        const ip = await Network.getIpAddressAsync();
-        const networkState = await Network.getNetworkStateAsync();
+        let ip = null;
+        let networkState = {};
 
-        // Skip IP check if force flag is set
+        // Skip IP polling if force flag is set
         if (!options.force) {
-            // Check if IP is valid for an Android hotspot (usually 192.168.43.1 or 192.168.44.1, etc.)
-            // If it's 0.0.0.0, 127.0.0.1 or null, the hotspot isn't sharing its network properly yet.
+            // Poll for IP address (up to 5 attempts, once per second)
+            // This gives the OS time to assign the hotspot IP.
+            for (let attempt = 1; attempt <= 5; attempt++) {
+                ip = await Network.getIpAddressAsync();
+                networkState = await Network.getNetworkStateAsync();
+
+                // If we found a valid local IP, break early
+                if (ip && ip !== '0.0.0.0' && ip !== '127.0.0.1') {
+                    break;
+                }
+
+                if (attempt < 5) {
+                    emit('status_change', {
+                        status: 'initializing',
+                        error: `Checking hotspot... (Attempt ${attempt}/5)`
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+
+            // Final check after polling
             if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
                 emit('status_change', {
                     status: 'error',
                     error: `Hotspot not detected (IP: ${ip || 'none'}, State: ${networkState.type}). If your hotspot is ON, please tap "⚠️ Force Start Anyway" below.`
                 });
-                return;
+                return false;
             }
         }
 
@@ -219,8 +236,10 @@ const startTcpServer = async (options = {}) => {
         tcpServer.listen({ port: P2P_PORT, host: '0.0.0.0' }, () => {
             emit('status_change', { status: 'listening', peerCount: 0 });
         });
+        return true;
     } catch (err) {
         emit('status_change', { status: 'error', error: 'Server error: ' + err.message });
+        return false;
     }
 };
 
@@ -306,6 +325,7 @@ const scanAndConnect = async (deviceInfo) => {
             scheduleReconnect(deviceInfo);
         }
     }
+    return found;
 };
 
 const scheduleReconnect = (deviceInfo) => {
@@ -336,9 +356,13 @@ export const start = async (role, deviceInfo, options = {}) => {
     emit('status_change', { status: 'initializing', peerCount: 0 });
 
     if (role === 'rescue') {
-        startTcpServer(options);
+        const success = await startTcpServer(options);
+        if (!success) {
+            isRunning = false;
+            return false;
+        }
     } else {
-        await scanAndConnect(deviceInfo);
+        const success = await scanAndConnect(deviceInfo);
         // Start periodic location broadcast if connected
         broadcastTimer = setInterval(() => {
             if (tcpClient && currentDeviceInfo) {
@@ -353,7 +377,14 @@ export const start = async (role, deviceInfo, options = {}) => {
                 } catch { clearInterval(broadcastTimer); }
             }
         }, BROADCAST_INTERVAL);
+
+        if (!success) {
+            // We return true even if scan fails, because the background reconnect loop is active
+            // However, the UI might want to know if immediate connection happened.
+            // For consistency with Rescue, if it's 'not_found' but loop is active, we return true.
+        }
     }
+    return true;
 };
 
 export const stop = () => {

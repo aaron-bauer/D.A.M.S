@@ -80,10 +80,17 @@ export default function HomeScreen({ navigation }) {
 
         // Start the P2P network module
         try {
-            await NetworkService.start(mesh.role, deviceInfo, options);
-            setActive(true);
+            const success = await NetworkService.start(mesh.role, deviceInfo, options);
+            if (success) {
+                setActive(true);
+            } else {
+                // If it failed (e.g. hotspot not found), ensure active is false
+                // so the user can see error buttons
+                setActive(false);
+            }
         } catch (err) {
             Alert.alert('Network Error', 'Failed to start mesh network: ' + err.message);
+            setActive(false);
         }
     };
 
