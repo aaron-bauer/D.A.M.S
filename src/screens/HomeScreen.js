@@ -231,8 +231,8 @@ export default function HomeScreen({ navigation }) {
                         </Text>
                     )}
 
-                    {/* Quick Diagnostic Link */}
-                    {(mesh.networkStatus.status === 'scanning' || mesh.networkStatus.status === 'error' || mesh.networkStatus.status === 'no_wifi') && (
+                    {/* Quick Diagnostic Link — always visible when network is active */}
+                    {active && (
                         <TouchableOpacity
                             style={styles.diagToggle}
                             onPress={() => setShowDiagnostics(!showDiagnostics)}
