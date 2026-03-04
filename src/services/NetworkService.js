@@ -153,12 +153,16 @@ export const connectToIp = async (host, deviceInfo) => {
 
     const connected = await new Promise((resolve) => {
         let settled = false;
-        const settle = (val) => { if (settled) return; settled = true; resolve(val); };
+        const settle = (val, err = null) => {
+            if (settled) return;
+            settled = true;
+            resolve({ success: val, error: err });
+        };
 
         const TcpSocket = getTcpSocket();
-        if (!TcpSocket) return settle(false);
+        if (!TcpSocket) return settle(false, 'Socket module missing');
 
-        const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: 3000 }, () => {
+        const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: 4000 }, () => {
             tcpClient = s;
             const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
             try { s.write(payload); } catch { }
@@ -166,12 +170,21 @@ export const connectToIp = async (host, deviceInfo) => {
             settle(true);
         });
 
-        s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
-        setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, 3500);
+        s.on('error', (err) => {
+            try { s.destroy(); } catch { }
+            settle(false, err.message || 'Connection Refused');
+        });
+
+        setTimeout(() => {
+            if (!settled) {
+                try { s.destroy(); } catch { }
+                settle(false, 'Connection Timeout (Check if WiFi is correct)');
+            }
+        }, 4500);
     });
 
-    if (connected) return true;
-    emit('status_change', { status: 'error', error: `Manual connection to ${host} failed.` });
+    if (connected.success) return true;
+    emit('status_change', { status: 'error', error: `Failed: ${connected.error}` });
     return false;
 };
 
@@ -263,7 +276,14 @@ const startTcpServer = async (options = {}) => {
         });
 
         tcpServer.listen({ port: P2P_PORT, host: '0.0.0.0' }, () => {
-            emit('status_change', { status: 'listening', peerCount: 0 });
+            // If ip is 0.0.0.0, it's often 192.168.43.1 or 192.168.49.1 for hotspots
+            const displayIP = (ip && ip !== '0.0.0.0') ? ip : 'Hotspot Default (Often 192.168.43.1)';
+            emit('status_change', {
+                status: 'listening',
+                peerCount: 0,
+                serverIP: displayIP,
+                info: `Server running on port ${P2P_PORT}`
+            });
         });
         return true;
     } catch (err) {

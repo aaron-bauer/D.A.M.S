@@ -158,12 +158,11 @@ export default function HomeScreen({ navigation }) {
             lon: loc?.lon || 120.9842,
         };
 
+        // NetworkService.connectToIp now handles its own status_change with details
         const success = await NetworkService.connectToIp(manualIp, deviceInfo);
         if (success) {
             setActive(true);
             setShowDiagnostics(false);
-        } else {
-            Alert.alert('Connection Failed', `Could not reach ${manualIp}. Make sure you are on the same WiFi.`);
         }
     };
 
@@ -275,8 +274,10 @@ export default function HomeScreen({ navigation }) {
                             )}
                             {isRescue && (
                                 <>
-                                    <Text style={styles.diagText}>• Server Port: 4747</Text>
-                                    <Text style={styles.diagText}>• Note: 0.0.0.0 is OK for hotspots</Text>
+                                    <Text style={styles.diagTitle}>Rescue Server Info</Text>
+                                    <Text style={styles.diagText}>• Listening IP: {mesh.networkStatus.serverIP || 'Checking...'}</Text>
+                                    <Text style={styles.diagText}>• Port: 4747</Text>
+                                    <Text style={styles.diagText}>• Tip: If IP is "Default", tell Survivor to try 192.168.43.1</Text>
                                 </>
                             )}
                         </View>
