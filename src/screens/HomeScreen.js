@@ -276,8 +276,19 @@ export default function HomeScreen({ navigation }) {
                                 <>
                                     <Text style={styles.diagTitle}>Rescue Server Info</Text>
                                     <Text style={styles.diagText}>• Listening IP: {mesh.networkStatus.serverIP || 'Checking...'}</Text>
-                                    <Text style={styles.diagText}>• Port: 4747</Text>
+                                    <Text style={styles.diagText}>• Port: 8080</Text>
                                     <Text style={styles.diagText}>• Tip: If IP is "Default", tell Survivor to try 192.168.43.1</Text>
+                                    {mesh.networkStatus.error && (
+                                        <Text style={[styles.diagText, { color: mesh.networkStatus.error.includes('✅') ? '#3FB950' : '#F85149' }]}>
+                                            {mesh.networkStatus.error}
+                                        </Text>
+                                    )}
+                                    <TouchableOpacity
+                                        style={[styles.manualBtn, { marginTop: 10 }]}
+                                        onPress={() => NetworkService.selfTest()}
+                                    >
+                                        <Text style={styles.manualBtnText}>🧪 Test Server</Text>
+                                    </TouchableOpacity>
                                 </>
                             )}
                         </View>

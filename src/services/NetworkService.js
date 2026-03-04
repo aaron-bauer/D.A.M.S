@@ -25,7 +25,7 @@ import * as Network from 'expo-network';
  */
 export const SIMULATION_MODE = false;
 
-const P2P_PORT = 4747;           // TCP port for all mesh traffic
+const P2P_PORT = 8080;           // TCP port for all mesh traffic (changed from 4747)
 const BROADCAST_INTERVAL = 15000; // Survivors re-send location every 15 s
 const RECONNECT_INTERVAL = 30000; // Survivors retry connection every 30 s
 const TCP_TIMEOUT_MS = 1500;      // Connection attempt timeout (ms)
@@ -186,6 +186,37 @@ export const connectToIp = async (host, deviceInfo) => {
     if (connected.success) return true;
     emit('status_change', { status: 'error', error: `Failed: ${connected.error}` });
     return false;
+};
+
+// ─── Rescue Self-Test ─────────────────────────────────────────────────────────
+// Lets the Rescue UI verify the TCP server is actually accepting connections
+export const selfTest = async () => {
+    const TcpSocket = getTcpSocket();
+    if (!TcpSocket) {
+        emit('status_change', { status: 'error', error: 'Self-test: TCP module missing!' });
+        return false;
+    }
+    return await new Promise((resolve) => {
+        let settled = false;
+        const settle = (val, msg) => {
+            if (settled) return; settled = true;
+            emit('status_change', {
+                status: val ? 'listening' : 'error',
+                error: msg,
+                selfTest: val,
+            });
+            resolve(val);
+        };
+        const s = TcpSocket.createConnection({ host: '127.0.0.1', port: P2P_PORT, timeout: 2000 }, () => {
+            try { s.destroy(); } catch { }
+            settle(true, `✅ Server OK on port ${P2P_PORT}`);
+        });
+        s.on('error', (err) => {
+            try { s.destroy(); } catch { }
+            settle(false, `❌ Server NOT listening: ${err.message}`);
+        });
+        setTimeout(() => settle(false, `❌ Server self-test timed out on port ${P2P_PORT}`), 2500);
+    });
 };
 
 // ─── Rescue Team: TCP Server ──────────────────────────────────────────────────
