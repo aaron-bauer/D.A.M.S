@@ -48,7 +48,7 @@ export default function HomeScreen({ navigation }) {
     }, [mesh.deviceInfo.lat, mesh.deviceInfo.lon]);
 
     // ─── Start/Stop Network ────────────────────────────────────────────────────
-    const handleToggleNetwork = async () => {
+    const handleToggleNetwork = async (options = {}) => {
         if (active) {
             NetworkService.stop();
             stopLocationTracking();
@@ -80,11 +80,22 @@ export default function HomeScreen({ navigation }) {
 
         // Start the P2P network module
         try {
-            await NetworkService.start(mesh.role, deviceInfo);
+            await NetworkService.start(mesh.role, deviceInfo, options);
             setActive(true);
         } catch (err) {
             Alert.alert('Network Error', 'Failed to start mesh network: ' + err.message);
         }
+    };
+
+    const handleForceStart = () => {
+        Alert.alert(
+            '⚠️ Force Start Network',
+            'This will skip the hotspot detection check. Only do this if you are sure your mobile hotspot is active.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Start Anyway', style: 'destructive', onPress: () => handleToggleNetwork({ force: true }) }
+            ]
+        );
     };
 
     const handleOpenHotspot = () => {
@@ -230,12 +241,22 @@ export default function HomeScreen({ navigation }) {
                         styles.mainBtn,
                         active ? styles.stopBtn : (mesh.networkStatus.status === 'error' ? styles.retryBtn : styles.startBtn)
                     ]}
-                    onPress={handleToggleNetwork}
+                    onPress={() => handleToggleNetwork()}
                 >
                     <Text style={styles.mainBtnText}>
                         {active ? '⏹  Stop Network' : (mesh.networkStatus.status === 'error' ? '🔄  Retry Network' : '▶  Start Network')}
                     </Text>
                 </TouchableOpacity>
+
+                {/* Force Start Button (Rescue only, Error state) */}
+                {isRescue && mesh.networkStatus.status === 'error' && !active && (
+                    <TouchableOpacity
+                        style={[styles.mainBtn, styles.forceBtn]}
+                        onPress={handleForceStart}
+                    >
+                        <Text style={styles.mainBtnText}>⚠️ Force Start Anyway</Text>
+                    </TouchableOpacity>
+                )}
 
                 {/* SOS — survivors only */}
                 {isSurvivor && (
@@ -276,6 +297,7 @@ const styles = StyleSheet.create({
     startBtn: { backgroundColor: '#0A84FF' },
     stopBtn: { backgroundColor: '#30363D' },
     retryBtn: { backgroundColor: '#E0A800', borderWidth: 1, borderColor: '#FFD60A' },
+    forceBtn: { backgroundColor: '#FF453A', marginTop: 8 },
     mainBtnText: { color: '#F0F6FC', fontSize: 17, fontWeight: '800', letterSpacing: 1 },
     sosBtn: { backgroundColor: '#FF3B30', paddingVertical: 20, borderRadius: 14, alignItems: 'center' },
     sosBtnText: { color: '#FFFFFF', fontSize: 20, fontWeight: '900', letterSpacing: 2 },

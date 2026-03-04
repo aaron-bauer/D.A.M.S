@@ -137,7 +137,7 @@ const handle = (msg, senderSocket) => {
 };
 
 // ─── Rescue Team: TCP Server ──────────────────────────────────────────────────
-const startTcpServer = async () => {
+const startTcpServer = async (options = {}) => {
     let TcpSocket;
     try {
         const mod = require('react-native-tcp-socket');
@@ -153,19 +153,23 @@ const startTcpServer = async () => {
     }
 
     try {
-        // Wait 1 second for the hotspot interface to fully initialize
+        // Wait 2 seconds for the hotspot interface to fully initialize
         emit('status_change', { status: 'initializing', peerCount: 0 });
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         const ip = await Network.getIpAddressAsync();
-        // Check if IP is valid for an Android hotspot (usually 192.168.43.1 or 192.168.44.1, etc.)
-        // If it's 0.0.0.0, 127.0.0.1 or null, the hotspot isn't sharing its network properly yet.
-        if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
-            emit('status_change', {
-                status: 'error',
-                error: 'Hotspot not detected. Please enable your mobile hotspot and try again.'
-            });
-            return;
+
+        // Skip IP check if force flag is set
+        if (!options.force) {
+            // Check if IP is valid for an Android hotspot (usually 192.168.43.1 or 192.168.44.1, etc.)
+            // If it's 0.0.0.0, 127.0.0.1 or null, the hotspot isn't sharing its network properly yet.
+            if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
+                emit('status_change', {
+                    status: 'error',
+                    error: `Hotspot not detected (IP found: ${ip || 'none'}). Please ensure mobile hotspot is on.`
+                });
+                return;
+            }
         }
 
         tcpServer = TcpSocket.createServer((socket) => {
@@ -314,8 +318,14 @@ const scheduleReconnect = (deviceInfo) => {
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
-export const start = async (role, deviceInfo) => {
-    if (isRunning) return;
+export const start = async (role, deviceInfo, options = {}) => {
+    if (isRunning && !options.force) return;
+
+    // If forcing while already running, stop first
+    if (isRunning && options.force) {
+        stop();
+    }
+
     currentRole = role;
     currentDeviceInfo = deviceInfo;
     isRunning = true;
@@ -325,7 +335,7 @@ export const start = async (role, deviceInfo) => {
     emit('status_change', { status: 'initializing', peerCount: 0 });
 
     if (role === 'rescue') {
-        startTcpServer();
+        startTcpServer(options);
     } else {
         await scanAndConnect(deviceInfo);
         // Start periodic location broadcast if connected
