@@ -255,35 +255,35 @@ const tryScanSubnet = async (subnet, ownIP, deviceInfo) => {
             let settled = false;
             const settle = (val) => { if (settled) return; settled = true; resolve(val); };
 
-            const s = require('react-native-tcp-socket').default.createConnection(
-                { host, port: P2P_PORT, timeout: TCP_TIMEOUT_MS },
-                () => {
-                    tcpClient = s;
-                    const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
-                    try { s.write(payload); } catch { }
-                    emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
+            const TcpSocket = getTcpSocket();
+            if (!TcpSocket) return settle(false);
 
-                    let buffer = '';
-                    s.on('data', (d) => {
-                        buffer += d.toString('utf8');
-                        const parts = buffer.split('\n');
-                        buffer = parts.pop();
-                        parts.forEach(part => {
-                            if (!part.trim()) return;
-                            const m = parse(part);
-                            if (m) handle(m, null);
-                        });
+            const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: TCP_TIMEOUT_MS }, () => {
+                tcpClient = s;
+                const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
+                try { s.write(payload); } catch { }
+                emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
+
+                let buffer = '';
+                s.on('data', (d) => {
+                    buffer += d.toString('utf8');
+                    const parts = buffer.split('\n');
+                    buffer = parts.pop();
+                    parts.forEach(part => {
+                        if (!part.trim()) return;
+                        const m = parse(part);
+                        if (m) handle(m, null);
                     });
-                    s.on('close', () => {
-                        tcpClient = null;
-                        if (isRunning) {
-                            emit('status_change', { status: 'not_found' });
-                            scheduleReconnect(deviceInfo);
-                        }
-                    });
-                    settle(true);
-                }
-            );
+                });
+                s.on('close', () => {
+                    tcpClient = null;
+                    if (isRunning) {
+                        emit('status_change', { status: 'not_found' });
+                        scheduleReconnect(deviceInfo);
+                    }
+                });
+                settle(true);
+            });
 
             s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
             setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, TCP_TIMEOUT_MS + 100);
