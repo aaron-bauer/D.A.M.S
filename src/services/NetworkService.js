@@ -146,6 +146,35 @@ const handle = (msg, senderSocket) => {
     }
 };
 
+// ─── Manual Connection Override ───────────────────────────────────────────────
+export const connectToIp = async (host, deviceInfo) => {
+    if (!isRunning) return false;
+    emit('status_change', { status: 'scanning', error: `Manually connecting to ${host}...` });
+
+    const connected = await new Promise((resolve) => {
+        let settled = false;
+        const settle = (val) => { if (settled) return; settled = true; resolve(val); };
+
+        const TcpSocket = getTcpSocket();
+        if (!TcpSocket) return settle(false);
+
+        const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: 3000 }, () => {
+            tcpClient = s;
+            const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
+            try { s.write(payload); } catch { }
+            emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
+            settle(true);
+        });
+
+        s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
+        setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, 3500);
+    });
+
+    if (connected) return true;
+    emit('status_change', { status: 'error', error: `Manual connection to ${host} failed.` });
+    return false;
+};
+
 // ─── Rescue Team: TCP Server ──────────────────────────────────────────────────
 const startTcpServer = async (options = {}) => {
     const TcpSocket = getTcpSocket();
@@ -299,9 +328,33 @@ const tryScanSubnet = async (subnet, ownIP, deviceInfo) => {
         if (results.some(r => r === true)) return true;
 
         // Brief pause to let the UI update and not overwhelm the network stack
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 100));
     }
     return false;
+};
+
+// Helper to prioritize the .1 address of a subnet (most likely hotspot host)
+const tryGatewayOnly = async (subnet, ownIP, deviceInfo) => {
+    if (!isRunning) return false;
+    const host = `${subnet}.1`;
+    if (ownIP === host) return false;
+
+    return await new Promise((resolve) => {
+        let settled = false;
+        const settle = (val) => { if (settled) return; settled = true; resolve(val); };
+        const TcpSocket = getTcpSocket();
+        if (!TcpSocket) return settle(false);
+
+        const s = TcpSocket.createConnection({ host, port: P2P_PORT, timeout: 2000 }, () => {
+            tcpClient = s;
+            const payload = JSON.stringify({ type: 'LOCATION', ...deviceInfo, timestamp: Date.now() }) + '\n';
+            try { s.write(payload); } catch { }
+            emit('status_change', { status: 'connected', serverIP: host, peerCount: 1 });
+            settle(true);
+        });
+        s.on('error', () => { try { s.destroy(); } catch { } settle(false); });
+        setTimeout(() => { if (!settled) { try { s.destroy(); } catch { } settle(false); } }, 2200);
+    });
 };
 
 const scanAndConnect = async (deviceInfo) => {
@@ -315,6 +368,9 @@ const scanAndConnect = async (deviceInfo) => {
 
     const ip = await Network.getIpAddressAsync();
 
+    // Always report own IP to the UI for diagnostics
+    emit('status_change', { status: 'scanning', error: `Local Device IP: ${ip || 'Unknown'}` });
+
     // If no WiFi/IP, try fallback subnets known for Android hotspots
     if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
         const fallbacks = [
@@ -322,25 +378,36 @@ const scanAndConnect = async (deviceInfo) => {
             '192.168.45', '192.168.46', '192.168.47',
             '192.168.1', '192.168.0', '10.42.0'
         ];
+        // Priority 1: Check all .1 addresses first
+        for (const sub of fallbacks) {
+            if (await tryGatewayOnly(sub, '0.0.0.0', deviceInfo)) return true;
+        }
+        // Priority 2: Full scan
         for (const sub of fallbacks) {
             if (await tryScanSubnet(sub, '0.0.0.0', deviceInfo)) return true;
         }
 
-        emit('status_change', { status: 'no_wifi', error: 'No WiFi IP found. Exhaustive scanning failed.' });
+        emit('status_change', { status: 'no_wifi', error: `Fail-safe search ended. My IP: ${ip}` });
         scheduleReconnect(deviceInfo);
         return false;
     }
 
     const subnet = ip.split('.').slice(0, 3).join('.');
+
+    // Check gateway of own subnet first
+    if (await tryGatewayOnly(subnet, ip, deviceInfo)) return true;
+
+    // Then full scan of own subnet
     if (await tryScanSubnet(subnet, ip, deviceInfo)) return true;
 
-    // If own subnet failed, maybe the hotspot is on a different standard subnet
+    // If own subnet failed, priority check .1 on others
     const standardHotspots = [
         '192.168.43', '192.168.49', '192.168.44',
         '192.168.45', '192.168.46', '192.168.47'
     ].filter(s => s !== subnet);
+
     for (const sub of standardHotspots) {
-        if (await tryScanSubnet(sub, ip, deviceInfo)) return true;
+        if (await tryGatewayOnly(sub, ip, deviceInfo)) return true;
     }
 
     if (isRunning) {

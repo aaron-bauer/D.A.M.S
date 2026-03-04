@@ -13,7 +13,7 @@
 import React, { useEffect, useState } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
-    SafeAreaView, Alert, ScrollView, StatusBar, Platform, Linking
+    SafeAreaView, Alert, ScrollView, StatusBar, Platform, Linking, TextInput
 } from 'react-native';
 
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
@@ -32,6 +32,7 @@ export default function HomeScreen({ navigation }) {
     const [active, setActive] = useState(false);
     const [lastLocation, setLastLocation] = useState(null);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
+    const [manualIp, setManualIp] = useState('');
 
     // Load last known location on mount
     useEffect(() => {
@@ -143,6 +144,29 @@ export default function HomeScreen({ navigation }) {
         );
     };
 
+    const handleManualConnect = async () => {
+        if (!manualIp || !manualIp.includes('.')) {
+            Alert.alert('Invalid IP', 'Please enter a valid IP address (e.g. 192.168.43.1)');
+            return;
+        }
+
+        const loc = await getLastLocation();
+        const deviceInfo = {
+            id: mesh.deviceInfo.id,
+            name: mesh.deviceInfo.name,
+            lat: loc?.lat || 14.5995,
+            lon: loc?.lon || 120.9842,
+        };
+
+        const success = await NetworkService.connectToIp(manualIp, deviceInfo);
+        if (success) {
+            setActive(true);
+            setShowDiagnostics(false);
+        } else {
+            Alert.alert('Connection Failed', `Could not reach ${manualIp}. Make sure you are on the same WiFi.`);
+        }
+    };
+
     // ─── Change Role ───────────────────────────────────────────────────────────
     const handleChangeRole = () => {
         Alert.alert(
@@ -229,6 +253,24 @@ export default function HomeScreen({ navigation }) {
                                     <Text style={styles.diagText}>• Scanning Speed: Turbo (Parallel)</Text>
                                     <Text style={styles.diagText}>• Subnet Info: {mesh.networkStatus.error || 'N/A'}</Text>
                                     <Text style={styles.diagText}>• Tip: Check if Hotspot is "2.4GHz" mode</Text>
+
+                                    <View style={styles.manualEntry}>
+                                        <Text style={styles.diagTitle}>Manual Connect</Text>
+                                        <TextInput
+                                            style={styles.ipInput}
+                                            placeholder="Ex: 192.168.43.1"
+                                            placeholderTextColor="#8B949E"
+                                            value={manualIp}
+                                            onChangeText={setManualIp}
+                                            keyboardType="numeric"
+                                        />
+                                        <TouchableOpacity
+                                            style={styles.manualBtn}
+                                            onPress={handleManualConnect}
+                                        >
+                                            <Text style={styles.manualBtnText}>Connect Manually</Text>
+                                        </TouchableOpacity>
+                                    </View>
                                 </>
                             )}
                             {isRescue && (
@@ -358,4 +400,11 @@ const styles = StyleSheet.create({
     },
     diagTitle: { color: '#F0F6FC', fontSize: 13, fontWeight: '800', marginBottom: 6 },
     diagText: { color: '#8B949E', fontSize: 12, marginBottom: 4, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
+    manualEntry: { marginTop: 15, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#30363D' },
+    ipInput: {
+        backgroundColor: '#0D1117', color: '#F0F6FC', padding: 10, borderRadius: 8,
+        borderWidth: 1, borderColor: '#30363D', marginBottom: 10, fontSize: 14
+    },
+    manualBtn: { backgroundColor: '#0A84FF', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+    manualBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
 });
