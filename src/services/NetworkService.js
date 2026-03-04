@@ -31,6 +31,16 @@ const RECONNECT_INTERVAL = 30000; // Survivors retry connection every 30 s
 const TCP_TIMEOUT_MS = 1500;      // Connection attempt timeout (ms)
 const SCAN_END = 254;             // Scan .1–.254 of the subnet (full range)
 
+// ─── Native Module Helper ─────────────────────────────────────────────────────
+const getTcpSocket = () => {
+    try {
+        const mod = require('react-native-tcp-socket');
+        return mod.default || mod;
+    } catch (e) {
+        return null;
+    }
+};
+
 // ─── Tiny Event Emitter ───────────────────────────────────────────────────────
 const listeners = {};
 
@@ -138,17 +148,10 @@ const handle = (msg, senderSocket) => {
 
 // ─── Rescue Team: TCP Server ──────────────────────────────────────────────────
 const startTcpServer = async (options = {}) => {
-    let TcpSocket;
-    try {
-        const mod = require('react-native-tcp-socket');
-        TcpSocket = mod.default || mod;
-    } catch (e) {
-        emit('status_change', { status: 'error', error: 'TCP Socket module not found' });
-        return;
-    }
+    const TcpSocket = getTcpSocket();
 
     if (!TcpSocket || !TcpSocket.createServer) {
-        emit('status_change', { status: 'error', error: 'Failed to initialize TCP Socket module (check native build)' });
+        emit('status_change', { status: 'error', error: 'TCP Socket module not found or failed to load' });
         return false;
     }
 
@@ -293,17 +296,10 @@ const tryScanSubnet = async (subnet, ownIP, deviceInfo) => {
 
 const scanAndConnect = async (deviceInfo) => {
     if (!isRunning) return false;
-    let TcpSocket;
-    try {
-        const mod = require('react-native-tcp-socket');
-        TcpSocket = mod.default || mod;
-    } catch (e) {
-        emit('status_change', { status: 'error', error: 'TCP Socket module not found' });
-        return false;
-    }
+    const TcpSocket = getTcpSocket();
 
     if (!TcpSocket || !TcpSocket.createConnection) {
-        emit('status_change', { status: 'error', error: 'Failed to initialize TCP Socket module' });
+        emit('status_change', { status: 'error', error: 'TCP Socket module not found or failed to load' });
         return false;
     }
 

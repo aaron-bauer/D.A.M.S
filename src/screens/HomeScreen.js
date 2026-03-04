@@ -89,7 +89,8 @@ export default function HomeScreen({ navigation }) {
                 setActive(false);
             }
         } catch (err) {
-            Alert.alert('Network Error', 'Failed to start mesh network: ' + err.message);
+            const errorMsg = err.message || JSON.stringify(err);
+            Alert.alert('Network Error', `Failed to start mesh network: ${errorMsg}\n\nPlease check if your hotspot is enabled.`);
             setActive(false);
         }
     };
