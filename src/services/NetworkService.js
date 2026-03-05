@@ -262,7 +262,8 @@ const startTcpServer = async (options = {}) => {
             if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1') {
                 emit('status_change', {
                     status: 'initializing',
-                    error: `Hotspot IP unknown (normal for some phones). Starting server...`
+                    error: null,
+                    info: `Hotspot interface hidden (normal). Starting server...`
                 });
             }
         }
@@ -317,6 +318,7 @@ const startTcpServer = async (options = {}) => {
                 status: 'listening',
                 peerCount: 0,
                 serverIP: displayIP,
+                error: null, // Clear any initialization warnings
                 info: `Server running on port ${P2P_PORT}`
             });
         });

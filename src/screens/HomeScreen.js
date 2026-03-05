@@ -192,12 +192,12 @@ export default function HomeScreen({ navigation }) {
     const isSurvivor = mesh.role === 'survivor';
     const statusLabel = {
         idle: 'Offline — Press Start',
-        initializing: mesh.networkStatus.error || 'Initializing network components…',
-        scanning: mesh.networkStatus.error || 'Scanning for rescue server…',
+        initializing: mesh.networkStatus.error || mesh.networkStatus.info || 'Initializing network components…',
+        scanning: mesh.networkStatus.error || mesh.networkStatus.info || 'Scanning for rescue server…',
         listening: '🛡️ Listening for survivors…',
         connected: '✅ Connected to mesh network',
         not_found: 'No rescue server found',
-        no_wifi: mesh.networkStatus.error || 'Not connected to WiFi',
+        no_wifi: mesh.networkStatus.error || mesh.networkStatus.info || 'Not connected to WiFi',
         error: mesh.networkStatus.error ? `⚠️ Error: ${mesh.networkStatus.error}` : 'Network error',
         stopped: 'Stopped',
     }[mesh.networkStatus.status] || mesh.networkStatus.status;
@@ -281,6 +281,11 @@ export default function HomeScreen({ navigation }) {
                                     {mesh.networkStatus.error && (
                                         <Text style={[styles.diagText, { color: mesh.networkStatus.error.includes('✅') ? '#3FB950' : '#F85149' }]}>
                                             {mesh.networkStatus.error}
+                                        </Text>
+                                    )}
+                                    {mesh.networkStatus.info && !mesh.networkStatus.error && (
+                                        <Text style={[styles.diagText, { color: '#8B949E' }]}>
+                                            ℹ️ {mesh.networkStatus.info}
                                         </Text>
                                     )}
                                     <TouchableOpacity
