@@ -1,91 +1,93 @@
 # Disaster Aid Management System (D.A.M.S.)
 
-A cross-platform mobile app that enables survivors and rescue teams to communicate location data **without any internet connection**, using a local peer-to-peer WiFi mesh network.
+## Infrastructure-Independent P2P Mesh Communication for Disaster Scenarios
+
+**D.A.M.S.** is a specialized mobile application designed to facilitate real-time communication and location tracking in environments where traditional telecommunications infrastructure (cellular, internet) has failed. By leveraging contemporary peer-to-peer (P2P) networking protocols, the system enables survivors to broadcast their GPS coordinates and emergency messages directly to rescue teams over a local Wi-Fi mesh.
 
 ---
 
-## How It Works
+## Technical Overview
 
-```
-Rescue Team phone (hotspot) ←—TCP/LAN—→ Survivor phones
-     ↳ TCP server on port 4747       ↳ Scan subnet, connect, push GPS
-     ↳ Plots all survivor locations on map
-```
+The system operates on an ad-hoc local area network (LAN) model, utilizing a **Star-Mesh Architecture**:
 
-1. **Rescue Team** enables a mobile hotspot on their phone, opens the app → selects **Rescue Team** → taps **Start Network**.
-2. **Survivors** connect to that hotspot (no internet!), open the app → select **Survivor** → tap **Start Network**.
-3. The survivor's app automatically finds the rescue server and starts broadcasting GPS every 15 seconds.
-4. Rescue team's map populates with survivor pins in real-time.
-5. Both sides can send emergency text messages over the same connection.
+- **Rescue Hub**: A central node (Rescue Team device) that establishes a mobile hotspot, acting as the gateway for the local mesh.
+- **Survivor Nodes**: Edge devices that connect to the hotspot and utilize **UDP Beaconing** and **TCP Socket Scanning** to automatically discover and authenticate with the Rescue Hub.
+- **Protocol**: Data is encapsulated in JSON packets and transmitted over persistent TCP/IP sockets on port `8080`.
 
-> **Demo/Simulation Mode** (default): enabled with `SIMULATION_MODE = true` in `NetworkService.js`. Runs with fake survivors and messages — no second device or build step needed. Perfect for school demos.
+### Data Flow
+1. **Discovery**: Survivors listen for an encrypted UDP beacon from the Rescue Hub or perform a subnet scan (`192.168.x.1-254`).
+2. **Persistence**: Once a handshake is established, the Survivor node enters a low-energy broadcast cycle, transmitting GPS data every 15 seconds.
+3. **Visualization**: The Rescue Hub parses incoming telemetry and dynamically renders markers on an offline-capable GIS interface.
 
 ---
 
-## Prerequisites
+## Key Features
 
-| Tool | Version | Download |
-|------|---------|----------|
-| Node.js | ≥ 18 | https://nodejs.org |
-| npm | ≥ 9 | included with Node |
-| Expo CLI | latest | `npm i -g expo-cli` |
-| Expo Go app | latest | App Store / Google Play |
+- **📡 Zero-Infrastructure Networking**: Operates entirely without cellular towers or internet backhaul.
+- **📍 Real-Time Telemetry**: Precision GPS tracking using `expo-location` with high-accuracy background polling.
+- **💬 Direct Messaging**: Full-duplex emergency text communication between survivors and rescue coordinators.
+- **🆘 SOS Priority**: One-tap emergency broadcast that elevates the survivor's status on the rescue map.
+- **💾 Local Persistence**: All critical data is cached locally via `AsyncStorage` to prevent data loss during signal drops.
 
 ---
 
-## Setup & Installation
+## Android Deployment (APK)
+
+For field operations, D.A.M.S. must be deployed as a native Android Package (APK). This ensures access to low-level networking APIs (TCP/UDP) and high-precision location services.
+
+### Building the APK
+
+1. **Prebuild Native Modules**:
+   Generate the `android` project directory from the Expo source:
+   ```bash
+   npx expo prebuild
+   ```
+
+2. **Compile Release APK**:
+   Build the signed or unsigned APK using the Gradle wrapper:
+   ```bash
+   cd android
+   ./gradlew assembleRelease
+   ```
+   *Note: The generated APK will be located in `android/app/build/outputs/apk/release/app-release.apk`.*
+
+3. **Installation**:
+   Transfer the `.apk` file to target devices via USB or Bluetooth and allow "Install from Unknown Sources" in Android settings.
+
+---
+
+## Setup & Development
+
+### Prerequisites
+
+| Component | Requirement |
+|-----------|-------------|
+| **Node.js** | ≥ 18.0.0 |
+| **OpenJDK** | 17 (Required for Android builds) |
+| **Android SDK** | API Level 33+ |
+| **Physical Devices** | Minimum 2 Android devices for P2P testing |
+
+### Local Environment Setup
 
 ```bash
-# 1. Open terminal in the project folder
+# Clone the repository
+git clone https://github.com/aaron-bauer/D.A.M.S.git
 cd "damc 2"
 
-# 2. Install all dependencies
+# Install dependencies
 npm install
 
-# 3. Start the Expo development server
-npx expo start
-```
-
-A QR code appears in the terminal. Scan it with the **Expo Go** app on your phone.
-
----
-
-## Running in Demo Mode (Expo Go — no build needed)
-
-`SIMULATION_MODE` is `true` by default in `src/services/NetworkService.js`.
-
-1. Open app → enter name → choose role → tap **Start Network**
-2. **Rescue Team**: After ~3 s, 3 mock survivors appear on the map. Mock emergency messages arrive.
-3. **Survivor**: After ~3 s, status changes to "Connected". An ACK message arrives.
-
-This works immediately in Expo Go — **no build step, no second device needed**.
-
----
-
-## Running on Real Devices (Two-phone P2P test)
-
-> Requires a native build. TCP sockets are native code.
-
-```bash
-# Generate native Android/iOS project folders
-npx expo prebuild
-
-# Build and run on connected Android device
+# Build and Run on Android Device (via ADB)
 npx expo run:android
-
-# Build and run on connected iOS device (Mac only)
-npx expo run:ios
 ```
 
-Then change line in `NetworkService.js`:
-```js
-export const SIMULATION_MODE = false;   // ← change from true to false
-```
+---
 
-**Test steps:**
-1. Device A (Rescue Team): Enable mobile hotspot → open app → select Rescue → Start Network
-2. Device B (Survivor): Connect WiFi to Device A's hotspot → open app → select Survivor → Start Network
-3. After ~10 s, Device B's location appears as a marker on Device A's map ✅
+## Field Testing Protocol
+
+1. **Initiate Hub**: On Device A, activate "Mobile Hotspot". Launch D.A.M.S. and select **Rescue Team**.
+2. **Connect Nodes**: On Device B, connect to Device A's hotspot. Launch D.A.M.S. and select **Survivor**.
+3. **Validation**: Observe the "Connected" status. Device B's location should appear as a marker on Device A's map within 10–15 seconds.
 
 ---
 
@@ -93,59 +95,29 @@ export const SIMULATION_MODE = false;   // ← change from true to false
 
 ```
 damc 2/
-├── App.js                          # Root entry point
-├── app.json                        # Expo config (permissions, name)
-├── package.json                    # Dependencies
-├── babel.config.js                 # Babel config
+├── android/                        # Native Android project (generated)
+├── app.json                        # System permissions & configuration
 └── src/
-    ├── context/
-    │   └── MeshContext.js          # Global state (role, survivors, messages)
     ├── services/
-    │   ├── StorageService.js       # AsyncStorage (save GPS, messages locally)
-    │   ├── LocationService.js      # GPS tracking via expo-location
-    │   └── NetworkService.js       # P2P TCP server/client + simulation
-    ├── navigation/
-    │   └── AppNavigator.js         # React Navigation (tabs + stack)
+    │   ├── NetworkService.js       # Core TCP/UDP P2P implementation
+    │   ├── LocationService.js      # GPS telemetry management
+    │   └── StorageService.js       # Offline data persistence
     ├── screens/
-    │   ├── RoleScreen.js           # Role picker (Survivor / Rescue)
-    │   ├── HomeScreen.js           # Status dashboard + SOS
-    │   ├── MapScreen.js            # Live map with survivor markers
-    │   └── MessagingScreen.js      # Emergency text messaging
-    └── components/
-        ├── ConnectionStatus.js     # Animated pulsing status indicator
-        └── MessageBubble.js        # Chat bubble component
+    │   ├── RoleScreen.js           # User role arbitration
+    │   ├── MapScreen.js            # GIS visualization for Rescue
+    │   └── MessagingScreen.js      # Multi-node text communication
+    └── context/
+        └── MeshContext.js          # Centralized reactive state
 ```
 
 ---
 
-## Key Dependencies
+## Academic References
 
-| Package | Purpose |
-|---------|---------|
-| `expo-location` | GPS coordinates (works without internet) |
-| `@react-native-async-storage/async-storage` | Offline-persistent local storage |
-| `react-native-maps` | Map display with survivor markers |
-| `react-native-tcp-socket` | TCP server/client for P2P LAN comms |
-| `expo-network` | Get device IP for LAN scanning |
-| `@react-navigation/native` | Screen navigation |
+1. **Meshmerize (2023)** – *Emergency Network Deployment: Mesh Networks Lifesaving Power in Disaster Management.*
+2. **goTenna (2022)** – *Mobile Mesh Networks: Ensuring Resilient Communication in Critical Infrastructure Failure.*
+3. **IEEE P1920.1** – *Standard for Aerial Communications and Networking.*
 
 ---
 
-## Mesh Networking Explained (For Report)
-
-Traditional apps rely on the internet (cell towers → cloud servers → other devices). In a disaster, cell towers fail.
-
-This app uses a **local area network (LAN) mesh**:
-- No packets leave the local WiFi network
-- One device acts as a **relay server** (rescue team's hotspot)
-- All other devices connect directly to it over TCP/IP
-- GPS packets are JSON strings: `{ type, id, name, lat, lon, timestamp }`
-
-This mimics principles described by **Meshmerize (2023)** and **goTenna** where devices form decentralised peer networks without infrastructure.
-
----
-
-## Sources
-
-1. Meshmerize (2023) – *Emergency Network Deployment: Mesh Networks Lifesaving Power in Disaster Management* https://meshmerize.net/emergency-network-deployment-mesh-in-disaster-management/
-2. goTenna Newsroom – *Mobile Mesh Networks Can Ensure Communication in Disaster* https://gotenna.com/blogs/newsroom/mobile-mesh-networks-can-ensure-communication-in-disaster
+© 2026 Disaster Aid Management System Project. Developed for academic submission.
