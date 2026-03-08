@@ -18,8 +18,16 @@ import { Text } from 'react-native';
 
 import RoleScreen from '../screens/RoleScreen';
 import HomeScreen from '../screens/HomeScreen';
-import MapScreen from '../screens/MapScreen';
-import MessagingScreen from '../screens/MessagingScreen';
+
+// Lazy load heavy screens to improve app startup time
+const MapScreen = React.lazy(() => import('../screens/MapScreen'));
+const MessagingScreen = React.lazy(() => import('../screens/MessagingScreen'));
+
+const SuspenseScreen = (Component) => (props) => (
+    <React.Suspense fallback={<Text style={{ color: '#8B949E', textAlign: 'center', marginTop: 50 }}>Loading Screen...</Text>}>
+        <Component {...props} />
+    </React.Suspense>
+);
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -47,12 +55,12 @@ const MainTabs = () => (
         />
         <Tab.Screen
             name="Map"
-            component={MapScreen}
+            component={SuspenseScreen(MapScreen)}
             options={{ tabBarIcon: tabIcon('🗺️'), tabBarLabel: 'Live Map' }}
         />
         <Tab.Screen
             name="Messages"
-            component={MessagingScreen}
+            component={SuspenseScreen(MessagingScreen)}
             options={{ tabBarIcon: tabIcon('💬'), tabBarLabel: 'Messages' }}
         />
     </Tab.Navigator>

@@ -25,7 +25,7 @@ const timeSince = (ts) => {
     return `${Math.floor(secs / 3600)}h ago`;
 };
 
-function SurvivorCard({ survivor }) {
+const SurvivorCard = React.memo(({ survivor }) => {
     const bgColor = survivor.isSOS ? '#2D1315' : '#161B22';
     const borderColor = survivor.isSOS ? '#FF3B30' : '#30363D';
     const icon = survivor.isSOS ? '🆘' : '🔴';
@@ -57,7 +57,7 @@ function SurvivorCard({ survivor }) {
             </View>
         </View>
     );
-}
+});
 
 export default function MapScreen() {
     const mesh = useMesh();
@@ -95,6 +95,10 @@ export default function MapScreen() {
                         renderItem={({ item }) => <SurvivorCard survivor={item} />}
                         contentContainerStyle={styles.list}
                         showsVerticalScrollIndicator={false}
+                        removeClippedSubviews={Platform.OS === 'android'}
+                        initialNumToRender={8}
+                        maxToRenderPerBatch={4}
+                        windowSize={5}
                     />
                 )
             ) : (

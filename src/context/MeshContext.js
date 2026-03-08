@@ -41,7 +41,11 @@ const reducer = (state, action) => {
             if (state.messages.some(m => m.id === action.payload.id)) {
                 return state;
             }
-            return { ...state, messages: [...state.messages, action.payload] };
+            const newMessages = [...state.messages, action.payload];
+            return {
+                ...state,
+                messages: newMessages.slice(-100) // Keep last 100 messages
+            };
         case 'RESET':
             return { ...initialState };
         default:

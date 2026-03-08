@@ -45,3 +45,12 @@ yarn-error.*
 
 # OS
 Thumbs.db
+
+# Build Logs & Temp
+*.log
+build_log.txt
+build_log_utf8.txt
+build_utf8.log
+java_paths.txt
+java_paths_utf8.txt
+dist-android/

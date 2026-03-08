@@ -23,7 +23,7 @@ const STATUS_COLOR = {
     error: '#FF3B30',
 };
 
-export default function ConnectionStatus({ status }) {
+const ConnectionStatus = React.memo(({ status }) => {
     const pulse = useRef(new Animated.Value(1)).current;
     const fade = useRef(new Animated.Value(0.6)).current;
 
@@ -62,7 +62,9 @@ export default function ConnectionStatus({ status }) {
             <View style={[styles.dot, { backgroundColor: color }]} />
         </View>
     );
-}
+});
+
+export default ConnectionStatus;
 
 const styles = StyleSheet.create({
     wrapper: { width: 80, height: 80, alignItems: 'center', justifyContent: 'center' },

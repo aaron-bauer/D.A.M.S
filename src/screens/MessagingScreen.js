@@ -5,7 +5,7 @@
  * Messages are sent to all connected devices (Rescue ↔ Survivor).
  * Message history is stored locally.
  */
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity,
     FlatList, StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform,
@@ -38,6 +38,13 @@ export default function MessagingScreen() {
         setText('');
     };
 
+    const renderItem = useCallback(({ item }) => (
+        <MessageBubble
+            message={item}
+            isSelf={item.sender === mesh.deviceInfo.name || item.isSelf}
+        />
+    ), [mesh.deviceInfo.name]);
+
     return (
         <SafeAreaView style={styles.safe}>
             <KeyboardAvoidingView
@@ -65,13 +72,12 @@ export default function MessagingScreen() {
                         ref={flatListRef}
                         data={mesh.messages}
                         keyExtractor={(item) => item.id}
-                        renderItem={({ item }) => (
-                            <MessageBubble
-                                message={item}
-                                isSelf={item.sender === mesh.deviceInfo.name || item.isSelf}
-                            />
-                        )}
+                        renderItem={renderItem}
                         contentContainerStyle={styles.list}
+                        removeClippedSubviews={Platform.OS === 'android'}
+                        initialNumToRender={10}
+                        maxToRenderPerBatch={5}
+                        windowSize={5}
                     />
                 )}
 

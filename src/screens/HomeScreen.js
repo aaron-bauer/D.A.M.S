@@ -32,6 +32,7 @@ export default function HomeScreen({ navigation }) {
     const [active, setActive] = useState(false);
     const [lastLocation, setLastLocation] = useState(null);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
+    const [diagLogs, setDiagLogs] = useState([]);
     const [manualIp, setManualIp] = useState('');
 
     // Load last known location on mount
@@ -150,19 +151,25 @@ export default function HomeScreen({ navigation }) {
             return;
         }
 
-        const loc = await getLastLocation();
-        const deviceInfo = {
-            id: mesh.deviceInfo.id,
-            name: mesh.deviceInfo.name,
-            lat: loc?.lat || 14.5995,
-            lon: loc?.lon || 120.9842,
-        };
+        setDiagLogs(prev => [...prev, `Manual connect probe to ${manualIp}...`]);
+        const test = await NetworkService.Diagnostics.testTcpHandshake(manualIp);
+        setDiagLogs(prev => [...prev, ...test.logs]);
 
-        // NetworkService.connectToIp now handles its own status_change with details
-        const success = await NetworkService.connectToIp(manualIp, deviceInfo);
-        if (success) {
-            setActive(true);
-            setShowDiagnostics(false);
+        if (test.success) {
+            const loc = await getLastLocation();
+            const deviceInfo = {
+                id: mesh.deviceInfo.id,
+                name: mesh.deviceInfo.name,
+                lat: loc?.lat || 14.5995,
+                lon: loc?.lon || 120.9842,
+            };
+            const success = await NetworkService.start('survivor', deviceInfo, { host: manualIp });
+            if (success) {
+                setActive(true);
+                setShowDiagnostics(false);
+            }
+        } else {
+            Alert.alert('Connection Failed', 'Could not establish TCP handshake. Check if IP is correct and server is listening.');
         }
     };
 
@@ -252,6 +259,15 @@ export default function HomeScreen({ navigation }) {
                                     <Text style={styles.diagText}>• Scanning Speed: Turbo (Parallel)</Text>
                                     <Text style={styles.diagText}>• Subnet Info: {mesh.networkStatus.error || 'N/A'}</Text>
                                     <Text style={styles.diagText}>• Tip: Check if Hotspot is "2.4GHz" mode</Text>
+
+                                    {diagLogs.length > 0 && (
+                                        <View style={styles.logBox}>
+                                            <Text style={styles.diagTitle}>Handshake Logs</Text>
+                                            {diagLogs.map((log, i) => (
+                                                <Text key={i} style={styles.logText}>› {log}</Text>
+                                            ))}
+                                        </View>
+                                    )}
 
                                     <View style={styles.manualEntry}>
                                         <Text style={styles.diagTitle}>Manual Connect</Text>
@@ -424,4 +440,9 @@ const styles = StyleSheet.create({
     },
     manualBtn: { backgroundColor: '#0A84FF', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
     manualBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+    logBox: {
+        marginTop: 10, padding: 8, backgroundColor: '#0D1117',
+        borderRadius: 6, borderWidth: 1, borderColor: '#30363D'
+    },
+    logText: { color: '#30D158', fontSize: 11, fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier', marginBottom: 2 },
 });

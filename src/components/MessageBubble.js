@@ -8,7 +8,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-export default function MessageBubble({ message, isSelf }) {
+const MessageBubble = React.memo(({ message, isSelf }) => {
     // SOS messages get a special full-width alert treatment
     if (message.isSOS) {
         return (
@@ -31,7 +31,9 @@ export default function MessageBubble({ message, isSelf }) {
             </View>
         </View>
     );
-}
+});
+
+export default MessageBubble;
 
 const styles = StyleSheet.create({
     row: { marginVertical: 4, paddingHorizontal: 12 },
